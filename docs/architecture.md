@@ -524,7 +524,7 @@ Each agent uses the `state.step(...)` context manager, which times the call, cat
 
 Implemented in `src/agentic_ir/llm.py` (see the deviation note in §7).
 
-**(a) Suppress qwen3 thinking.** `qwen3:8b` is a hybrid reasoning model that emits `<think>…</think>` by default. At 30–45 tok/s an unsuppressed think block costs 10–20 seconds *per call*, which over 250 questions × several configurations is hours of pure waste. Belt and braces, all three:
+**(a) Suppress qwen3 thinking.** `qwen3:8b` is a hybrid reasoning model that emits `<think>…</think>` by default. Measured: with `think=True` and `num_predict=128`, the model spent the **entire** budget on a 503-character reasoning block and produced no answer at all. Thinking does not merely add latency — it starves the response. Belt and braces, all three:
 
 1. pass `think=False` to `ollama.chat` (ignored by older clients, hence the rest),
 2. append `/no_think` to the system prompt,
@@ -586,6 +586,37 @@ No `eval`, no `ast.literal_eval`, no regex-based JSON "fixing" beyond rung 4. Sc
 | `text` empty or `< 3` chars | drop the node |
 | `rewrites` longer than `max_rewrites` (2) | truncate |
 | all nodes dropped | fall through to the fallback ladder |
+
+**`strategy` is DERIVED, not trusted.** Measured on 8 representative questions
+(qwen3:8b, `temperature 0`, schema-constrained): the model produced structurally
+**correct** decompositions 8/8 — right bridge shape, right `{{qN.answer}}`
+placeholders — but labelled `strategy` as `single_hop` on 7 of 8, including
+obvious bridge and comparison cases. It is good at building the graph and bad at
+naming it. Since `strategy` gates the deterministic comparison shortcut (§5.4)
+and fallback F1, trusting the label would silently disable both.
+
+Infer it from the validated DAG instead, and overwrite whatever the model said:
+
+| DAG shape | Derived strategy |
+|---|---|
+| 1 node | `single_hop` |
+| ≥2 roots, plus one node depending on all of them | `comparison` |
+| a chain with ≥1 dependent node | `bridge` |
+| ≥2 roots and a dependent chain of depth ≥2 | `bridge_comparison` |
+| dependent node whose intent is `attribute` | `attribute` |
+
+Log both `strategy_llm` and `strategy_derived` in the trace: their disagreement
+rate is a cheap, honest datapoint for Chapter 4 on where an 8B model's
+self-reporting can and cannot be relied upon.
+
+**Combiner nodes.** The model reliably emits a final node that restates the
+original question and depends on all the others (`q3: "Which magazine was
+started first, ..." deps=[q1,q2]`). Retrieving for it is wasted work — the
+answer comes from composing q1 and q2, not from a passage. Detect it (depends on
+every other node **and** Jaccard ≥ 0.6 with the original question), mark
+`is_combiner=True`, skip RETRIEVE and KG for it, and let the Synthesizer handle
+the composition. On a 3-node comparison plan this removes a third of all
+retrieval work.
 
 **Fallback ladder** (deterministic, no LLM):
 
@@ -802,7 +833,7 @@ Store the result in `state.answers[qid]`; store rungs 1–2 results additionally
 
 ## 5. Where the LLM is deliberately not used
 
-At 30–45 tok/s every avoided call is 2–15 s of real wall clock, and over 250 questions × multiple configurations that is the difference between an overnight run and an unfinishable one. These are the rules.
+Measured throughput on this machine is **52 tok/s** warm (`qwen3:8b` Q4_K_M, RTX 5060, 100% GPU, no offload), with a mean schema-constrained planner call at **3.75 s**. Every avoided call is still 2–5 s of real wall clock, and over 250 questions × multiple configurations that compounds into hours. These are the rules.
 
 ### 5.1 Tool routing (`agents.retriever.heuristic_shortcut: true`)
 
@@ -1068,7 +1099,7 @@ trace:
 
 1. **KG ground-truth leakage (highest severity).** 2WikiMultihopQA ships gold Wikidata evidence triples. Building the KG from those triples would let the KG Navigator read the answer key, and every KG-attributed gain in the report would be an artefact. **Mitigation, non-negotiable:** the KG is built from corpus passage text only (§3.3); gold triples are loaded exclusively by `eval/metrics.py` for scoring path quality. Enforce with a test that `kg/build.py` never opens a file whose name contains `evidence` or `triple`.
 
-2. **Total evaluation wall clock.** 9 configurations × 2 datasets × 250 questions. Agentic configs run ~30–45 s/question, so one agentic config on one dataset is ≈2.5–3 h; four agentic configs across two datasets is ≈20–24 h of GPU time, before any debugging re-runs. **Mitigation:** run the three ablations (`−planner`, `−kg`, `−verifier`) on a fixed 150-question subsample of the same 250 and say so explicitly in the results table caption; keep `agentic_full` and all baselines on the full 250. The LLM response cache makes re-runs after harness bugs nearly free, which is what actually saves this schedule.
+2. **Total evaluation wall clock.** 9 configurations × 2 datasets × 250 questions. Revised down after live measurement: at 52 tok/s and ~3.75 s per structured call, an agentic question costs ≈22–25 s (≈6 LLM calls plus CPU reranking and NLI), so one agentic config on one dataset is ≈1.7 h and the whole grid is ≈12–16 h rather than the 20–24 h first estimated. Note the one-time cost this hides: the first call after a model load spends ~9.5 s on prompt evaluation alone (CUDA warmup), which is why `OLLAMA_KEEP_ALIVE` is not optional. **Mitigation:** run the three ablations (`−planner`, `−kg`, `−verifier`) on a fixed 150-question subsample of the same 250 and say so explicitly in the results table caption; keep `agentic_full` and all baselines on the full 250. The LLM response cache makes re-runs after harness bugs nearly free, which is what actually saves this schedule.
 
 3. **8 GB VRAM contention.** `qwen3:8b` (Q4 ≈ 5.2 GB) + 8192-token KV cache (≈0.6–1 GB) + bge-small (0.13 GB) + MiniLM cross-encoder (0.09 GB) + DeBERTa-v3-base NLI (≈0.7 GB) is right at the edge, and an OOM mid-run is exactly the question-194 failure we are trying to prevent. **Mitigation:** run all three HF encoders on **CPU at query time** — they process ~5 short queries and ~50 rerank pairs per question, which is a fraction of a second on CPU — and reserve the GPU entirely for Ollama. Use the GPU only for the offline corpus embedding build. Set `OLLAMA_KEEP_ALIVE=30m` so the model is not reloaded between questions.
 

@@ -114,10 +114,15 @@ requirement already satisfied and leaves it alone.
 
 ### Environment variables
 
+Set these **persistently**, not with `$env:`. Ollama runs as a background
+service started at login, so a variable assigned in a shell session never
+reaches it. After setting them, restart Ollama for the change to take effect.
+
 ```powershell
-$env:OLLAMA_NUM_PARALLEL = "1"     # the single highest-value setting here
-$env:OLLAMA_KEEP_ALIVE   = "30m"
-$env:PYTHONUTF8          = "1"
+[Environment]::SetEnvironmentVariable("OLLAMA_NUM_PARALLEL",      "1",   "User")
+[Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIVE",        "30m", "User")
+[Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS", "1",   "User")
+[Environment]::SetEnvironmentVariable("PYTHONUTF8",               "1",   "User")
 ```
 
 `OLLAMA_NUM_PARALLEL=1` matters more than it looks. Ollama allocates
@@ -151,6 +156,21 @@ at query time:
 Against `max_wall_clock_s: 300` the CPU encoder latencies are irrelevant, so
 this costs essentially nothing and removes a whole class of mid-run OOM
 failures. Full analysis in [docs/environment-validation.md](docs/environment-validation.md).
+
+### Measured performance
+
+Verified on this machine, warm model, `qwen3:8b` Q4_K_M at 100% GPU:
+
+| | |
+|---|---|
+| Generation throughput | **52 tok/s** |
+| Schema-constrained planner call | **3.75 s** mean (2.8-6.7 s) |
+| VRAM with model resident | 6707 / 8151 MiB — no CPU offload, 1.4 GiB spare |
+| Structured-output reliability | **8/8** parsed, 0 retries, 0 thinking leakage |
+
+The first call after a model load costs an extra ~9.5 s in CUDA warmup — which
+is the whole reason `OLLAMA_KEEP_ALIVE` matters. Don't benchmark a cold model
+and conclude the hardware is slow; that mistake was made once already here.
 
 ### Usage
 
