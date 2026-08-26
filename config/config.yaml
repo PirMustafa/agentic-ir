@@ -60,10 +60,20 @@ llm:
     num_ctx: 8192
     num_predict: 1024
     seed: 42
+  # qwen3 is a hybrid reasoning model and emits <think>...</think> by default.
+  # At ~30-45 tok/s that is 10-20s of pure waste per call, so it is suppressed
+  # three ways: this flag, a /no_think system suffix, and response stripping.
+  think: false
   # Retries on malformed structured output before falling back to a
   # deterministic default. Logged as `parse_failures` in the run trace.
   max_format_retries: 2
   request_timeout_s: 180
+  # Response cache. Makes a completed run exactly reproducible and turns
+  # re-runs after a harness bug from hours into seconds. Latency figures in
+  # the report must come from a cold-cache run (meta.json records which).
+  cache:
+    enabled: true
+    path: data/cache/llm_cache.sqlite
 
 # ------------------------------------------------------------
 # Retrieval
@@ -98,11 +108,20 @@ agents:
     max_subqueries: 5
     max_replans: 2               # Verifier -> Planner feedback loop depth
     allow_query_rewrite: true
+    # Fire the comparison template before the LLM. Kept OFF for the headline
+    # agentic_full config so the planning claim stays honest; reported
+    # separately as an efficiency ablation.
+    template_shortcut: false
   retriever:
     tools: [bm25_search, dense_search, hybrid_search, rerank]
     # When the tool choice is unambiguous, skip the LLM call and use a
     # rule. Measured and reported as `llm_calls_saved`.
     heuristic_shortcut: true
+    multi_query: true
+    max_rewrites: 2              # expansion rides inside the planner call: 0 extra LLM calls
+    # Skip the cross-encoder when the fused top-1 is already decisively ahead;
+    # 50 forward passes that cannot change the answer are not worth running.
+    rerank_margin_gate: 0.15
   kg:
     enabled: true
     max_hops: 2
@@ -114,11 +133,22 @@ agents:
     nli_model: cross-encoder/nli-deberta-v3-base
     confidence_threshold: 0.55   # below this -> trigger a re-plan
     require_citations: true
+    max_evidence: 20
+    # Call the LLM adjudicator only inside +/- this band around the threshold.
+    # Confident accepts and confident rejects never spend a call.
+    uncertainty_band: 0.15
+    weights: {nli: 0.45, citation: 0.25, retrieval: 0.15, llm: 0.15}
 
 orchestrator:
   max_iterations: 6
   max_llm_calls_per_question: 20
   max_wall_clock_s: 300
+  # Only the synthesizer and verifier may spend the last N calls, so an answer
+  # is always produced even when the planner exhausts the budget.
+  reserve_llm_calls: 2
+  # argmax(confidence) over ALL cycles, not the last one -- a bad re-plan must
+  # not silently overwrite a better first answer.
+  answer_selection: best_confidence
   trace: true                    # write full per-question JSONL trace
 
 # ------------------------------------------------------------
@@ -140,3 +170,10 @@ evaluation:
     - agentic_no_planner
     - agentic_no_kg
     - agentic_no_verifier
+
+# ------------------------------------------------------------
+# Tracing
+# ------------------------------------------------------------
+trace:
+  dir: results/runs
+  raw_output_chars: 2000
