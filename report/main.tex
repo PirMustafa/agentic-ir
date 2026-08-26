@@ -1,0 +1,55 @@
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[hidelinks]{hyperref}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+
+\graphicspath{{figures/}{../results/figures/}}
+
+\title{%
+  \textbf{Agentic AI for Information Retrieval}\[0.4em]
+  \large A Multi-Agent System for Multi-Hop Retrieval with\
+  Self-Reflective Validation
+}
+\author{%
+  Student ID: D03000104\[0.6em]
+  \small Universit\`a degli Studi di Napoli Federico II\
+  \small Information Retrieval --- A.Y. 2024/2025\
+  \small Prof. Antonio Maria Rinaldi --- Dr. Domenico Benfenati\
+  \small IKNOS-DIETI Lab
+}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\begin{abstract}
+% TODO (write last, after Chapter 5)
+% ~200 words. State: the problem, the four-agent architecture, the
+% Verifier->Planner feedback loop as the central contribution, the two
+% benchmarks, and the headline result against the strongest baseline.
+\end{abstract}
+
+\input{chapters/ch1_introduction}
+\input{chapters/ch2_data}
+\input{chapters/ch3_methodology}
+\input{chapters/ch4_implementation}
+\input{chapters/ch5_conclusions}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

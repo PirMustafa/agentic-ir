@@ -1,0 +1,44 @@
+\chapter{Data and Preprocessing}
+\label{ch:data}
+
+\section{Requirements for Evaluating an Agentic IR System}
+% Establish the criteria BEFORE naming datasets, so the choice reads as
+% derived rather than arbitrary:
+%  (a) queries with relevance judgments, or Chapter 4 cannot report nDCG/Recall;
+%  (b) genuinely multi-hop needs, or the Planner has nothing to decompose;
+%  (c) structured/entity annotations, or the KG Navigator cannot be scored;
+%  (d) a corpus that indexes on consumer hardware.
+
+\section{On the Datasets Listed in the Assignment Brief}
+\label{sec:table2}
+% The honest, load-bearing section. The brief's Table 2 lists The Pile, Common
+% Crawl, WikiText, OpenWebText and LAION-5B. All are LM PRETRAINING corpora:
+% no queries, no qrels, no gold answers. Criterion (a) fails outright, so
+% Chapter 4's mandated comparison against baseline IR systems is not computable.
+% The brief instructs "always check for eventual updates of links and datasets
+% via a web search"; that is the licence for the substitution below.
+% Keep this to one measured paragraph -- state it, justify it, move on.
+
+\section{HotpotQA}
+% Distractor setting: 7,405 dev questions, 2 gold + 8 distractor paragraphs each.
+% Emphasise SUPPORTING FACTS: sentence-level retrieval ground truth, not merely
+% answer strings. Report corpus statistics after deduplication.
+% Report: #questions, #passages, mean passage length, easy/medium/hard split.
+
+\section{2WikiMultihopQA}
+% Gold Wikidata evidence TRIPLES per question -- the reason this dataset is here.
+% It converts the KG Navigator from a component we describe into one we measure.
+% Reasoning-type labels: comparison, inference, compositional, bridge-comparison.
+
+\section{Preprocessing Pipeline}
+% Passage segmentation, deduplication and canonical IDs, text normalisation,
+% entity extraction and alias resolution, construction of the entity graph.
+% State clearly what is NOT done and why (e.g. no stopword removal for dense).
+
+\section{Evaluation Sampling}
+% Justify the stratified 250-question sample per dataset: local inference at
+% ~30-45 tok/s makes a full-split agentic run ~10h per configuration, and with
+% nine configurations that is not feasible. Stratify on difficulty (HotpotQA)
+% and reasoning type (2Wiki). Report the bootstrap CI width to demonstrate the
+% sample is large enough to separate the systems being compared.
+% \input{../../results/tables/dataset_stats.tex}

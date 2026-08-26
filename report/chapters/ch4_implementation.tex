@@ -1,0 +1,58 @@
+\chapter{System Implementation and Evaluation}
+\label{ch:implementation}
+
+\section{System Architecture}
+% Map onto the brief's named modules: query planner, tool-invocation manager,
+% retrieval engine, validation component. Orchestrator state machine.
+% Cross-reference docs/architecture.md.
+
+\section{Implementation Details}
+\subsection{Indexing}
+% BM25 index construction, FAISS index type, build time, memory footprint.
+\subsection{Local Inference}
+% Ollama, qwen3:8b, the 8GB VRAM budget and model placement. Structured JSON
+% output and the deterministic fallback when parsing fails.
+\subsection{Budget Enforcement}
+% max_replans=2, max_llm_calls_per_question=20, max_wall_clock_s=300.
+% Why an agentic system needs hard caps: without them a miscalibrated verifier
+% turns a three-second query into an unbounded loop.
+
+\section{Experimental Setup}
+% Hardware (RTX 5060 Laptop 8GB, 31.6GB RAM), software versions, random seeds.
+% Everything a third party needs to reproduce the numbers.
+
+\section{Baselines}
+% Ordered weakest to strongest so the agentic system must earn its result:
+% bm25_only, dense_only, hybrid_rerank, naive_rag, self_ask.
+% hybrid_rerank is the honest one to beat -- say so explicitly.
+
+\section{Evaluation Metrics}
+\subsection{Retrieval Quality}
+% Recall@{2,5,10}, nDCG@10, MRR, Supporting-Fact EM/F1.
+\subsection{Answer Quality}
+% Exact Match, token-level F1.
+\subsection{Agent-Specific Measures}
+% LLM calls, tool calls, latency, plan depth, re-plan rate, citation grounding.
+% Make the argument: a system that gains three F1 points for twenty times the
+% compute has not obviously won. Reporting cost beside quality is what the
+% brief means by agent-specific measures.
+
+\section{Results}
+% \input{../../results/tables/main_results.tex}
+% \input{../../results/tables/agent_metrics.tex}
+% Never hand-type numbers -- tables are generated so report and code cannot drift.
+
+\section{Ablation Study}
+% \input{../../results/tables/ablations.tex}
+% Minus planner / minus kg / minus verifier. Attribute gains to components.
+% If a component does not help, REPORT THAT. An honestly analysed negative
+% ablation is worth more than a suppressed one.
+
+\section{Error Analysis}
+% Sampled failures from the traces, categorised: decomposition errors, retrieval
+% misses, entity-linking errors, verifier miscalibration.
+% This is where the trace logging pays off.
+
+\section{Discussion}
+% Where agency helped, where it cost more than it returned, and under what
+% conditions a practitioner should simply prefer the hybrid baseline.

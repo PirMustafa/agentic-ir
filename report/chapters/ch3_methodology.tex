@@ -1,0 +1,53 @@
+\chapter{Retrieval Methodologies}
+\label{ch:methodology}
+
+\section{Classical Foundations}
+\subsection{Sparse Retrieval: BM25}
+% Term weighting, the k1/b parameters and the values used (config: k1=0.9, b=0.4).
+% Strengths: exact term and rare-entity matching, no training, interpretable.
+% Weakness: vocabulary mismatch.
+
+\subsection{Dense Retrieval}
+% Bi-encoder architecture, bge-small-en-v1.5 (384-dim), inner-product search
+% over FAISS. Strength: semantic matching. Weakness: entity confusion and poor
+% handling of rare surface forms -- exactly the failure BM25 covers.
+
+\subsection{Hybrid Fusion and Reranking}
+% Reciprocal Rank Fusion, and why rank-based fusion beats score normalisation
+% across incommensurable scorers. Cross-encoder reranking: full attention over
+% (query, passage), accurate but O(n) forward passes -- hence rerank depth 50.
+
+\section{Why Single-Shot Retrieval Fails on Multi-Hop Needs}
+% The pivotal argument of the report. For a bridge question, the second-hop
+% passage is not lexically or semantically similar to the ORIGINAL query -- it
+% is similar to a query that can only be formed AFTER the first hop resolves.
+% No amount of ranking quality fixes this; it requires a second retrieval round.
+% Support with a concrete example and a measured recall ceiling.
+
+\section{Agentic Retrieval}
+\subsection{Query Decomposition and Refinement}
+% Table 1, tasks 1 and 2. Sub-query DAG, dependency placeholders, re-planning.
+% Relate to Self-Ask and IRCoT; state precisely how this design differs.
+
+\subsection{Tool-Augmented Retrieval}
+% Table 1, task 3. The tool registry and how the agent selects among tools.
+% Include the deterministic heuristic shortcut and JUSTIFY it: an agent that
+% invokes an LLM to make a decision a rule already settles is spending the
+% user's latency budget, not demonstrating intelligence.
+
+\subsection{Knowledge Graph Traversal}
+% Table 1, task 4. Entity linking, bounded traversal (max 2 hops, 25 neighbours),
+% bridge-entity discovery. Explainability: the traversal path IS the explanation.
+
+\subsection{Self-Reflective Validation}
+% Table 1, task 5. NLI entailment, citation grounding, confidence scoring, and
+% the re-plan trigger at confidence < 0.55. Discuss the failure mode honestly:
+% a miscalibrated verifier either loops needlessly or rubber-stamps errors.
+
+\section{The Role of the Language Model}
+% Where the LLM genuinely adds value versus where deterministic code is better.
+% Constraints imposed by local 8B inference and how the design accommodates them.
+
+\section{Architectural Summary}
+% TikZ diagram of the full system. The Verifier-to-Planner back-edge should be
+% visually prominent -- it is the contribution.
