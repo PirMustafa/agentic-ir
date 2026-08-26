@@ -125,19 +125,21 @@ def test_every_open_specifies_utf8():
             if not isinstance(node, ast.Call):
                 continue
             fn = node.func
-            is_open = (isinstance(fn, ast.Name) and fn.id == "open") or (
-                isinstance(fn, ast.Attribute) and fn.attr == "open"
-            )
-            if not is_open:
+            builtin_open = isinstance(fn, ast.Name) and fn.id == "open"
+            path_open = isinstance(fn, ast.Attribute) and fn.attr == "open"
+            if not (builtin_open or path_open):
                 continue
             kwargs = {k.arg for k in node.keywords}
-            # binary mode needs no encoding
+            # Mode is the FIRST positional arg on Path.open(mode) but the
+            # SECOND on the builtin open(path, mode). Checking only the latter
+            # makes every binary Path.open() look like a violation.
+            mode_args = node.args[1:2] if builtin_open else node.args[0:1]
             mode = next(
-                (a.value for a in node.args[1:2] if isinstance(a, ast.Constant)),
+                (a.value for a in mode_args if isinstance(a, ast.Constant)),
                 next((k.value.value for k in node.keywords
                       if k.arg == "mode" and isinstance(k.value, ast.Constant)), ""),
             )
-            if "b" in str(mode):
+            if "b" in str(mode):   # binary mode takes no encoding
                 continue
             if "encoding" not in kwargs:
                 offenders.append(f"{path.name}:{node.lineno}")

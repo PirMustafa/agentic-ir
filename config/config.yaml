@@ -27,7 +27,11 @@ datasets:
     # Stratified evaluation sample. Full split is 7,405 questions;
     # a full agentic run over it is ~10h on an 8GB laptop GPU.
     eval_sample: 250
-    strata: [level]              # easy / medium / hard
+    # NOT [level]: measured on the actual split, all 7,405 validation questions
+    # are level=hard (easy/medium exist only in train), so stratifying on it
+    # gives one stratum and a silently unstratified sample. `type` is the
+    # informative split here: bridge 5,918 / comparison 1,487.
+    strata: [type]               # bridge / comparison
 
   twowiki:
     enabled: true
