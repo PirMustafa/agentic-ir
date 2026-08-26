@@ -33,7 +33,13 @@ datasets:
     enabled: true
     # 2WikiMultihopQA. Ships gold Wikidata evidence triples, which is
     # what lets us score the KG Navigator against ground truth.
-    hf_id: xanhho/2WikiMultihopQA
+    #
+    # NOT xanhho/2WikiMultihopQA: that repo is a script loader, and datasets
+    # >=4.0 removed script support entirely ("Dataset scripts are no longer
+    # supported"), with no trust_remote_code escape hatch. This mirror is
+    # parquet, and its supporting_facts/context shapes match HotpotQA's, so
+    # one loader handles both datasets.
+    hf_id: framolfese/2WikiMultihopQA
     split: validation
     eval_sample: 250
     strata: [type]               # comparison / inference / compositional / bridge_comparison
@@ -87,6 +93,10 @@ retrieval:
   dense:
     model: BAAI/bge-small-en-v1.5
     dim: 384
+    # GPU only for the offline index build; at query time the encoders live on
+    # CPU so Ollama gets the whole card. See docs/environment-validation.md.
+    build_device: cuda
+    query_device: cpu
     normalize: true
     batch_size: 256
     query_prefix: "Represent this sentence for searching relevant passages: "
@@ -97,6 +107,7 @@ retrieval:
   rerank:
     enabled: true
     model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    device: cpu                  # ~0.3-0.6s for 50 short passages; keeps VRAM free
     top_n: 50                    # rerank depth
   top_k: 10                      # final passages returned per sub-query
 
@@ -131,6 +142,7 @@ agents:
     enabled: true
     method: nli_plus_llm         # nli | llm | nli_plus_llm
     nli_model: cross-encoder/nli-deberta-v3-base
+    nli_device: cpu              # ~0.5-2s; VRAM is fully committed to Ollama
     confidence_threshold: 0.55   # below this -> trigger a re-plan
     require_citations: true
     max_evidence: 20

@@ -1,36 +1,49 @@
 # --- Core ---
-numpy>=1.26
-pandas>=2.2
+# Upper bounds are deliberate. An unpinned floor resolves to the newest major
+# on every fresh install, and Chapter 4's numbers have to be reproducible.
+# Regenerate requirements.lock.txt once M1 is green.
+numpy>=1.26,<3
+pandas>=2.2,<3
 pyyaml>=6.0
 tqdm>=4.66
 orjson>=3.10
 
 # --- Datasets ---
-datasets>=2.20
-huggingface-hub>=0.24
+# datasets>=4.0 dropped script-based loaders; every dataset id in
+# config/config.yaml must therefore be a parquet repo.
+datasets>=4.0,<5
+huggingface-hub>=0.34,<1.0
 
 # --- Sparse retrieval ---
-bm25s>=0.2.0
-PyStemmer>=2.2.0
+bm25s>=0.2.0,<1
+PyStemmer>=2.2.0,<4
 
 # --- Dense retrieval / reranking ---
-sentence-transformers>=3.0
-faiss-cpu>=1.8.0
-# torch: install separately with the CUDA build for the RTX 5060 (see README)
-transformers>=4.44
+# sentence-transformers 6.x requires transformers>=5, which would contradict
+# the transformers pin below. Keep this pair coherent.
+sentence-transformers>=3.0,<6
+transformers>=4.44,<5
+faiss-cpu>=1.8.0,<2
+# torch is NOT listed here: PyPI ships a CPU-only wheel on Windows, and this
+# machine needs the cu128 build for sm_120 (Blackwell). Install it FIRST,
+# from the cu128 index -- see README step 3.
 
 # --- Knowledge graph ---
-networkx>=3.3
+networkx>=3.3,<4
 
 # --- Local LLM (Ollama) ---
-ollama>=0.3.0
+# >=0.4 is required: 0.3.x only accepts the string "json" for `format` and
+# would silently drop our JSON-schema constraints.
+ollama>=0.4,<1
 
 # --- Evaluation ---
-pytrec-eval-terrier>=0.5.6
-scipy>=1.13
+# Same C++ core as trec_eval, which produced the published BEIR numbers we
+# compare against. Do not substitute a hand-rolled nDCG.
+pytrec-eval-terrier>=0.5.6,<1
+scipy>=1.13,<2
 
 # --- Reporting / plots ---
-matplotlib>=3.9
+matplotlib>=3.9,<4
 
 # --- Dev ---
 pytest>=8.0

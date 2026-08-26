@@ -86,16 +86,71 @@ ollama pull qwen3:8b
 # 2. Python environment
 python -m venv .venv
 .venv\Scripts\activate                # Windows
+
+# 3. PyTorch FIRST, from the cu128 index -- order matters, see below
+pip install "torch>=2.7,<2.12" --index-url https://download.pytorch.org/whl/cu128
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_arch_list())"
+#   -> must print True and a list containing 'sm_120'
+
+# 4. Everything else
 pip install -r requirements.txt
 
-# 3. PyTorch with CUDA (do NOT rely on the default CPU wheel)
-pip install torch --index-url https://download.pytorch.org/whl/cu124
-
-# 4. Data + indexes
+# 5. Data + indexes
 python scripts/download_data.py
 python scripts/build_corpus.py
 python scripts/build_indexes.py
 ```
+
+**Why torch is installed first, and why cu128.** The RTX 5060 is Blackwell,
+compute capability **sm_120**. CUDA 12.8 is the first toolkit that targets it,
+so `cu124` and `cu126` wheels contain no machine code for this device. The trap
+is that `pip install` from those indexes *succeeds* -- you get a green install
+and a dead GPU, visible only as mysteriously slow indexing. Run the verify line;
+it turns a silent 10x slowdown into a loud failure.
+
+Order matters because `sentence-transformers` pulls `torch` from PyPI, whose
+Windows wheel is CPU-only. Installing the cu128 build first means pip finds the
+requirement already satisfied and leaves it alone.
+
+### Environment variables
+
+```powershell
+$env:OLLAMA_NUM_PARALLEL = "1"     # the single highest-value setting here
+$env:OLLAMA_KEEP_ALIVE   = "30m"
+$env:PYTHONUTF8          = "1"
+```
+
+`OLLAMA_NUM_PARALLEL=1` matters more than it looks. Ollama allocates
+`num_ctx x num_parallel` of KV cache, so at the default 4 slots our configured
+8192-token context becomes 32768 tokens -- **4.5 GB of KV instead of 1.1 GB** --
+which forces CPU offload on an 8 GB card and destroys throughput.
+
+`OLLAMA_KEEP_ALIVE=30m` prevents model reloads between questions. At up to 20
+LLM calls per question, ~15-second reloads would dominate the very latency
+metric Chapter 4 reports.
+
+`PYTHONUTF8=1` because Windows still defaults to cp1252 and both datasets are
+full of Unicode entity names (`Xawery Zulawski`). Without it the trace writer
+dies mid-run on a `UnicodeEncodeError`.
+
+### VRAM budget
+
+The card reports 8151 MiB, but Windows already holds ~747 MiB, so the real
+budget is **6.99 GiB**. `qwen3:8b` at Q4_K_M plus its KV cache needs ~6.5 GiB --
+it fits, with almost nothing to spare. Every other model therefore runs on CPU
+at query time:
+
+| Component | Placement | Cost |
+|---|---|---|
+| `qwen3:8b` | **GPU**, exclusively | ~6.5 GiB |
+| `bge-small` (index build) | GPU, offline only, Ollama stopped | ~1.5 GiB peak |
+| `bge-small` (query encoding) | CPU | <10 ms per query |
+| MiniLM cross-encoder | CPU | ~0.3-0.6 s per 50 passages |
+| DeBERTa NLI | CPU | ~0.5-2 s |
+
+Against `max_wall_clock_s: 300` the CPU encoder latencies are irrelevant, so
+this costs essentially nothing and removes a whole class of mid-run OOM
+failures. Full analysis in [docs/environment-validation.md](docs/environment-validation.md).
 
 ### Usage
 
