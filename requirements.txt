@@ -1,0 +1,37 @@
+# --- Core ---
+numpy>=1.26
+pandas>=2.2
+pyyaml>=6.0
+tqdm>=4.66
+orjson>=3.10
+
+# --- Datasets ---
+datasets>=2.20
+huggingface-hub>=0.24
+
+# --- Sparse retrieval ---
+bm25s>=0.2.0
+PyStemmer>=2.2.0
+
+# --- Dense retrieval / reranking ---
+sentence-transformers>=3.0
+faiss-cpu>=1.8.0
+# torch: install separately with the CUDA build for the RTX 5060 (see README)
+transformers>=4.44
+
+# --- Knowledge graph ---
+networkx>=3.3
+
+# --- Local LLM (Ollama) ---
+ollama>=0.3.0
+
+# --- Evaluation ---
+pytrec-eval-terrier>=0.5.6
+scipy>=1.13
+
+# --- Reporting / plots ---
+matplotlib>=3.9
+
+# --- Dev ---
+pytest>=8.0
+ruff>=0.6

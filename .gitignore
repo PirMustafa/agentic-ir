@@ -1,0 +1,43 @@
+# Data (downloaded via scripts/download_data.py)
+data/raw/
+data/processed/
+data/indexes/
+*.jsonl.gz
+*.faiss
+*.pkl
+
+# Results: keep tables/figures, drop raw per-question traces
+results/runs/*
+!results/runs/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Models / caches
+.cache/
+models/
+*.gguf
+
+# LaTeX build artifacts
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.bbl
+report/*.blg
+report/*.synctex.gz
+report/*.fls
+report/*.fdb_latexmk
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

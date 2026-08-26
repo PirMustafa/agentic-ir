@@ -1,0 +1,142 @@
+# ============================================================
+# Agentic AI for Information Retrieval
+# Central configuration. Every knob referenced in the report
+# should be traceable to a value in this file.
+# ============================================================
+
+project:
+  name: agentic-ir
+  student_id: D03000104
+  seed: 42
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  indexes: data/indexes
+  results: results
+
+# ------------------------------------------------------------
+# Datasets
+# ------------------------------------------------------------
+datasets:
+  hotpotqa:
+    enabled: true
+    hf_id: hotpotqa/hotpot_qa
+    hf_config: distractor
+    split: validation
+    # Stratified evaluation sample. Full split is 7,405 questions;
+    # a full agentic run over it is ~10h on an 8GB laptop GPU.
+    eval_sample: 250
+    strata: [level]              # easy / medium / hard
+
+  twowiki:
+    enabled: true
+    # 2WikiMultihopQA. Ships gold Wikidata evidence triples, which is
+    # what lets us score the KG Navigator against ground truth.
+    hf_id: xanhho/2WikiMultihopQA
+    split: validation
+    eval_sample: 250
+    strata: [type]               # comparison / inference / compositional / bridge_comparison
+
+# ------------------------------------------------------------
+# Local LLM (Ollama). No API keys anywhere in this project.
+# ------------------------------------------------------------
+llm:
+  provider: ollama
+  host: http://localhost:11434
+  # Per-agent models. Planner and Verifier get the reasoning model;
+  # the high-volume Retrieval agent gets the cheaper/faster path.
+  default_model: qwen3:8b
+  fallback_model: qwen2.5:7b-instruct
+  models:
+    planner:   qwen3:8b
+    retriever: qwen3:8b
+    kg:        qwen3:8b
+    verifier:  qwen3:8b
+    synthesizer: qwen3:8b
+  options:
+    temperature: 0.0
+    top_p: 0.9
+    num_ctx: 8192
+    num_predict: 1024
+    seed: 42
+  # Retries on malformed structured output before falling back to a
+  # deterministic default. Logged as `parse_failures` in the run trace.
+  max_format_retries: 2
+  request_timeout_s: 180
+
+# ------------------------------------------------------------
+# Retrieval
+# ------------------------------------------------------------
+retrieval:
+  sparse:
+    method: bm25
+    k1: 0.9
+    b: 0.4
+    stemmer: english
+  dense:
+    model: BAAI/bge-small-en-v1.5
+    dim: 384
+    normalize: true
+    batch_size: 256
+    query_prefix: "Represent this sentence for searching relevant passages: "
+    index_type: flat_ip          # exact search; corpus is small enough
+  hybrid:
+    method: rrf
+    rrf_k: 60
+  rerank:
+    enabled: true
+    model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    top_n: 50                    # rerank depth
+  top_k: 10                      # final passages returned per sub-query
+
+# ------------------------------------------------------------
+# Agents
+# ------------------------------------------------------------
+agents:
+  planner:
+    max_subqueries: 5
+    max_replans: 2               # Verifier -> Planner feedback loop depth
+    allow_query_rewrite: true
+  retriever:
+    tools: [bm25_search, dense_search, hybrid_search, rerank]
+    # When the tool choice is unambiguous, skip the LLM call and use a
+    # rule. Measured and reported as `llm_calls_saved`.
+    heuristic_shortcut: true
+  kg:
+    enabled: true
+    max_hops: 2
+    max_neighbors: 25
+    entity_linker: alias_match   # alias_match | llm
+  verifier:
+    enabled: true
+    method: nli_plus_llm         # nli | llm | nli_plus_llm
+    nli_model: cross-encoder/nli-deberta-v3-base
+    confidence_threshold: 0.55   # below this -> trigger a re-plan
+    require_citations: true
+
+orchestrator:
+  max_iterations: 6
+  max_llm_calls_per_question: 20
+  max_wall_clock_s: 300
+  trace: true                    # write full per-question JSONL trace
+
+# ------------------------------------------------------------
+# Evaluation
+# ------------------------------------------------------------
+evaluation:
+  retrieval_metrics: [recall@2, recall@5, recall@10, ndcg@10, mrr]
+  answer_metrics: [em, f1]
+  support_metrics: [sp_em, sp_f1]
+  agent_metrics: [llm_calls, tool_calls, latency_s, plan_depth, replan_rate, citation_grounding]
+  bootstrap_samples: 1000        # for confidence intervals
+  configurations:
+    - bm25_only
+    - dense_only
+    - hybrid_rerank
+    - naive_rag
+    - self_ask
+    - agentic_full
+    - agentic_no_planner
+    - agentic_no_kg
+    - agentic_no_verifier
