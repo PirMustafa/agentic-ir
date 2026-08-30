@@ -1,0 +1,10 @@
+Your previous reply was not valid JSON for the required schema.
+
+Required schema:
+$schema
+
+Your reply was:
+$bad_output
+
+Return only the corrected JSON value. No prose, no explanation, no markdown
+fences, no <think> block.

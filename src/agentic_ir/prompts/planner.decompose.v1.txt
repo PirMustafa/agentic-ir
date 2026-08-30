@@ -1,0 +1,30 @@
+Decompose a multi-hop question into the smallest set of retrieval sub-queries
+that answers it. At most $max_subqueries sub-queries; fewer is better.
+
+Rules:
+- Each sub-query must be answerable from ONE encyclopedia paragraph.
+- A sub-query that needs an earlier answer must list that id in "depends_on"
+  and refer to it with a placeholder: {{q1.answer}}, {{q1.entity}} or {{q1.title}}.
+- Never invent an entity you were not given; use a placeholder instead.
+- If the question compares two named things, emit one independent sub-query per
+  thing.
+- If the question needs no decomposition, emit exactly one sub-query.
+- "rewrites" holds at most $max_rewrites alternative phrasings of the same
+  sub-query, for query expansion. Leave it empty when nothing useful differs.
+- ids are "q1", "q2", ... in order. "depends_on" may only name earlier ids.
+
+Answer with JSON only, in exactly this shape:
+{"strategy": "single_hop|bridge|comparison|attribute|bridge_comparison",
+ "subqueries": [
+   {"id": "q1", "text": "Who directed the film Titanic?", "depends_on": [],
+    "intent": "lookup", "entities": ["Titanic"], "answer_type": "entity",
+    "tool_hint": null, "rewrites": ["director of the film Titanic"]},
+   {"id": "q2", "text": "When was {{q1.answer}} born?", "depends_on": ["q1"],
+    "intent": "attribute", "entities": [], "answer_type": "date",
+    "tool_hint": null, "rewrites": []}
+ ]}
+
+intent is one of: lookup, attribute, comparison, bridge, temporal, yesno.
+answer_type is one of: entity, date, number, yesno, string.
+
+Question: $question

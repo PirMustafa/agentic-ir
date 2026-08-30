@@ -1,0 +1,26 @@
+A previous attempt to answer this question was judged insufficient. Produce a
+NEW retrieval plan that targets what is still missing. At most $max_subqueries
+sub-queries.
+
+Original question: $question
+Previous plan: $previous_plan_summary
+What we already established: $covered_entities
+What the verifier could NOT establish: $missing_information
+Sub-queries that returned nothing useful: $failed_subquery_ids
+Suggested lines of enquiry: $suggested_subqueries
+Confidence of the previous answer: $confidence
+
+Do NOT repeat any of these sub-queries (they were already tried):
+$banned_subquery_texts
+
+At least one sub-query must be materially different from every banned one --
+different wording alone is not enough, it must ask for different information.
+Placeholders {{q1.answer}}, {{q1.entity}} and {{q1.title}} refer to earlier
+sub-queries and require the matching id in "depends_on".
+
+Answer with JSON only, in exactly this shape:
+{"strategy": "single_hop|bridge|comparison|attribute|bridge_comparison",
+ "subqueries": [
+   {"id": "q1", "text": "...", "depends_on": [], "intent": "lookup",
+    "entities": [], "answer_type": "entity", "tool_hint": null, "rewrites": []}
+ ]}
