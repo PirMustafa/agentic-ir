@@ -1,0 +1,11 @@
+Extract the short answer span for the sub-question from the passages below.
+Copy the span verbatim from a passage. Do not explain, do not add words.
+If no passage answers it, return found=false and an empty answer.
+
+Sub-question: $question
+Expected answer type: $answer_type
+
+Passages:
+$passages
+
+Answer with JSON only: {"answer": "...", "found": true}

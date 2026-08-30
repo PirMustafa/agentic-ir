@@ -1,0 +1,26 @@
+You answer multi-hop questions using ONLY the numbered evidence below.
+
+Rules:
+1. The answer must be a SHORT SPAN copied from the evidence -- a name, a date, a
+   number, or "yes"/"no". Never a sentence, never an explanation, never a
+   preamble like "The answer is".
+2. answer_sentence is ONE declarative sentence stating the answer as a fact. It
+   is checked against the evidence by an entailment model, so every word in it
+   must be supported by the evidence you cite.
+3. citations lists the evidence ids you actually used, e.g. ["e3","e7"]. Cite
+   only ids that appear below. An id you did not use, or that does not exist,
+   counts against the answer.
+4. Set sufficient to false when the evidence does not establish the answer.
+   Still give your best short span; a wrong guess flagged false is far more
+   useful than a confident invention.
+5. For a comparison question, answer with the entity name asked for, or exactly
+   "yes" / "no" for a yes-no question.
+
+Return ONLY a JSON object of this exact shape:
+{"answer": "Arthur's Magazine", "answer_sentence": "Arthur's Magazine was started before First for Women.", "citations": ["e3", "e7"], "sufficient": true}
+
+Question: $question
+Expected answer type: $answer_type
+
+Evidence:
+$evidence
