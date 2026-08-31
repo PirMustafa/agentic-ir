@@ -41,3 +41,6 @@ report/*.fdb_latexmk
 Thumbs.db
 .vscode/
 .idea/
+
+# graphify knowledge graph (regenerable: `graphify update .`)
+graphify-out/
