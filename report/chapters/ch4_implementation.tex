@@ -25,6 +25,17 @@
 % Ordered weakest to strongest so the agentic system must earn its result:
 % bm25_only, dense_only, hybrid_rerank, naive_rag, self_ask.
 % hybrid_rerank is the honest one to beat -- say so explicitly.
+%
+% MEASURED WARNING (n=20 smoke, hotpotqa, qwen3:8b) -- verify at n=250 before
+% attributing anything to decomposition:
+%   self_ask asked a follow-up on only 4 of 20 questions. Splitting EM by that:
+%     - 4 follow-up questions : naive_rag .750 vs self_ask .750  (identical)
+%     - 16 single-turn        : naive_rag .438 vs self_ask .625  (all the gain)
+%   So self_ask's entire +0.15 EM came from questions where NO decomposition
+%   occurred -- it is the decision turn ("can I answer yet?"), not the extra
+%   hop. If this holds at n=250 the report must say so: it would mean the
+%   multi-hop baseline's advantage is not multi-hop at all, which also changes
+%   how much of agentic_full's margin can be credited to planning.
 
 \section{Evaluation Metrics}
 \subsection{Retrieval Quality}
@@ -38,17 +49,18 @@
 % brief means by agent-specific measures.
 
 \section{Results}
-% \input{../../results/tables/main_results.tex}
-% \input{../../results/tables/agent_metrics.tex}
+\input{../results/tables/main_results.tex}
+\input{../results/tables/agent_metrics.tex}
 % Never hand-type numbers -- tables are generated so report and code cannot drift.
 
 \section{Ablation Study}
-% \input{../../results/tables/ablations.tex}
+\input{../results/tables/ablations.tex}
 % Minus planner / minus kg / minus verifier. Attribute gains to components.
 % If a component does not help, REPORT THAT. An honestly analysed negative
 % ablation is worth more than a suppressed one.
 
 \section{Error Analysis}
+\input{../results/tables/error_analysis.tex}
 % Sampled failures from the traces, categorised: decomposition errors, retrieval
 % misses, entity-linking errors, verifier miscalibration.
 % This is where the trace logging pays off.

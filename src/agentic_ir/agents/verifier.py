@@ -65,9 +65,48 @@ __all__ = [
     "PROMPT_ID",
     "Verifier",
     "build_directive",
+    "preflight_nli",
 ]
 
 PROMPT_ID = "verifier.adjudicate.v1"
+
+
+def preflight_nli(cfg: Any = None) -> tuple[bool, str]:
+    """Load the NLI encoder now and report whether it worked.
+
+    Call this BEFORE a long evaluation run. The degraded path is safe in the
+    sense that it never raises, but it is not safe for the *results*: token
+    containment scored 1.000 on an answer where the real model scores 0.0008
+    entailment (a comparison claim supported by only one operand's date).
+    Because ``nli_support`` carries 0.45 of the confidence blend, a silent
+    fallback pushes nearly everything above the 0.55 threshold, the verdict is
+    always ``accept``, and the re-plan loop -- the contribution this project is
+    built to measure -- never fires. The run completes, the numbers look
+    plausible, and the central result is an artefact.
+
+    So: fail loudly here rather than 250 questions later. Returns
+    ``(ok, message)`` instead of raising, matching the module's no-blocking
+    contract.
+    """
+    from ..config import load_config
+
+    cfg = cfg or load_config()
+    name = str(cfg.get("agents.verifier.nli_model"))
+    device = str(cfg.get("agents.verifier.nli_device", "cpu"))
+    try:
+        scorer = CrossEncoderNLI(name, device)
+        rows = scorer.score([("A cat sat on the mat.", "A cat sat on the mat.")])
+    except Exception as exc:  # noqa: BLE001 - preflight reports, never raises
+        return False, f"NLI unavailable ({type(exc).__name__}: {exc}) -- verifier would run DEGRADED"
+    if not rows:
+        return False, "NLI returned no scores -- verifier would run DEGRADED"
+    entail = rows[0].get("entailment", 0.0)
+    if entail < 0.5:
+        return False, (
+            f"NLI loaded but scored a self-entailment at {entail:.3f}; "
+            "labels are probably misaligned"
+        )
+    return True, f"NLI ok ({name} on {device}, self-entailment {entail:.3f})"
 
 _ADJUDICATE_SCHEMA: dict[str, Any] = {
     "type": "object",

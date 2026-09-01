@@ -123,6 +123,9 @@ reaches it. After setting them, restart Ollama for the change to take effect.
 [Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIVE",        "30m", "User")
 [Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS", "1",   "User")
 [Environment]::SetEnvironmentVariable("PYTHONUTF8",               "1",   "User")
+[Environment]::SetEnvironmentVariable("OMP_NUM_THREADS",          "4",   "User")
+[Environment]::SetEnvironmentVariable("KMP_DUPLICATE_LIB_OK",     "TRUE","User")
+[Environment]::SetEnvironmentVariable("TOKENIZERS_PARALLELISM",   "false","User")
 ```
 
 `OLLAMA_NUM_PARALLEL=1` matters more than it looks. Ollama allocates
@@ -133,6 +136,12 @@ which forces CPU offload on an 8 GB card and destroys throughput.
 `OLLAMA_KEEP_ALIVE=30m` prevents model reloads between questions. At up to 20
 LLM calls per question, ~15-second reloads would dominate the very latency
 metric Chapter 4 reports.
+
+`OMP_NUM_THREADS=4`, `KMP_DUPLICATE_LIB_OK=TRUE` and
+`TOKENIZERS_PARALLELISM=false` prevent Windows segfaults during long runs. Two
+were observed here -- one mid index-build, one mid-evaluation -- traced to
+commit-charge pressure and a faiss/torch OpenMP conflict. Set them before any
+250-question sweep; a segfault four hours into a run is expensive.
 
 `PYTHONUTF8=1` because Windows still defaults to cp1252 and both datasets are
 full of Unicode entity names (`Xawery Zulawski`). Without it the trace writer
@@ -220,11 +229,11 @@ docs/assignment-brief.md   The original assignment specification
 ## Project status
 
 - [x] **M0** — Repository scaffold, configuration, environment
-- [ ] **M1** — Corpus, BM25 + dense indexes, non-agentic baselines
-- [ ] **M2** — Planner and Retrieval agents
-- [ ] **M3** — KG Navigator
-- [ ] **M4** — Verifier and the re-plan feedback loop
-- [ ] **M5** — Full evaluation, ablations, result tables
+- [x] **M1** — Corpus, BM25 + dense indexes, non-agentic baselines
+- [x] **M2** — Planner and Retrieval agents
+- [x] **M3** — KG Navigator
+- [x] **M4** — Verifier and the re-plan feedback loop
+- [ ] **M5** — Full evaluation, ablations, result tables *(harness ready; runs pending)*
 - [ ] **M6** — Report Chapters 1 & 5, final PDF
 
 ## License
