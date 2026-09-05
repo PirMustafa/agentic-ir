@@ -4,24 +4,38 @@
 % Requires \usepackage{booktabs} and \usepackage{graphicx};
 % report/main.tex already loads both.
 % Source runs:
-%   hotpotqa/agentic_full: agentic_full_hotpotqa_20260901T214116Z (5 questions)
+%   hotpotqa/agentic_full: agentic_full_hotpotqa_20260904T221533Z (250 questions)
+%   hotpotqa/agentic_no_kg: agentic_no_kg_hotpotqa_20260905T232702Z (17 questions)  PRELIMINARY: short of the 250-question evaluation slice; deltas and significance withheld
+%   hotpotqa/agentic_no_planner: agentic_no_planner_hotpotqa_20260905T224906Z (250 questions)
+%   hotpotqa/agentic_no_verifier: agentic_no_verifier_hotpotqa_20260905T213927Z (250 questions)
+%   hotpotqa/bm25_only: bm25_only_hotpotqa_20260902T113736Z (250 questions)
+%   hotpotqa/dense_only: dense_only_hotpotqa_20260902T113746Z (250 questions)
+%   hotpotqa/hybrid_rerank: hybrid_rerank_hotpotqa_20260902T114415Z (250 questions)
+%   hotpotqa/naive_rag: naive_rag_hotpotqa_20260902T120313Z (250 questions)
+%   hotpotqa/self_ask: self_ask_hotpotqa_20260904T194457Z (250 questions)
+%   twowiki/agentic_full: agentic_full_twowiki_20260905T184526Z (250 questions)
+%   twowiki/bm25_only: bm25_only_twowiki_20260902T113905Z (250 questions)
+%   twowiki/dense_only: dense_only_twowiki_20260902T113913Z (250 questions)
+%   twowiki/hybrid_rerank: hybrid_rerank_twowiki_20260904T184235Z (250 questions)
+%   twowiki/naive_rag: naive_rag_twowiki_20260904T201400Z (250 questions)
+%   twowiki/self_ask: self_ask_twowiki_20260904T210355Z (250 questions)
 
 \begin{table}[htbp]
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \caption{Ablation study on \texttt{hotpotqa}. Deltas are measured against \texttt{agentic\_full} ($\dagger$), so a \textit{negative} $\Delta$F1 means the removed component was helping. \textbf{Bold} marks an ablation significantly \textit{better} than the full system and $^{\downarrow}$ one significantly worse (paired bootstrap, 95\% CI of the difference excluding zero); unmarked differences are not significant. \texttt{hybrid\_rerank} is repeated from the main results as the non-agentic floor, since removing planning, synthesis and verification reduces the pipeline to it. \texttt{--} marks a configuration that has not been run.}
+  \caption{Ablation study on \texttt{hotpotqa}. Deltas are measured against \texttt{agentic\_full} ($\dagger$), so a \textit{negative} $\Delta$F1 means the removed component was helping. \textbf{Bold} marks an ablation significantly \textit{better} than the full system and $^{\downarrow}$ one significantly worse (paired bootstrap, 95\% CI of the difference excluding zero); unmarked differences are not significant. Sample sizes are stated per row and are not assumed equal: \texttt{agentic\_full} $n=250$, \texttt{agentic\_no\_planner} $n=250$, \texttt{agentic\_no\_kg} $n=17^{\ddagger}$, \texttt{agentic\_no\_verifier} $n=250$, \texttt{hybrid\_rerank} $n=250$, against a 250-question evaluation slice. \texttt{hybrid\_rerank} is repeated from the main results as the non-agentic floor, since removing planning, synthesis and verification reduces the pipeline to it. Latency is the median per question, matching Table~\ref{tab:agent-metrics-hotpotqa}; the maximum and the wall-clock overruns are reported there. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{hybrid\_rerank} is retrieval-only: it emits a ranking and no answer, so the EM, F1, $\Delta$F1 and $p$ columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened. \textbf{$^{\ddagger}$ marks a preliminary row}: \texttt{agentic\_no\_kg} ($n=17$) had not covered the full 250-question evaluation slice when this table was generated, so the point estimates are over the questions completed so far and every delta, $p$-value and significance mark against it is withheld -- a paired test between a prefix and the full slice is not a paired test. These numbers will move; they are not final results.}
   \label{tab:ablations-hotpotqa}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
   \begin{tabular}{lrrrrrrr}
     \toprule
-    System & $n$ & EM & F1 & $\Delta$F1 vs.\ full [95\% CI] & $p$ & LLM calls & Latency (s) \\
+    System & $n$ & EM & F1 & $\Delta$F1 vs.\ full [95\% CI] & $p$ & LLM calls & Latency (s) med. \\
     \midrule
-    \texttt{agentic\_full} & 5 & 0.400$^{\dagger}$ & 0.400$^{\dagger}$ & -- & -- & 3.20 & 38.7 \\
-    \texttt{agentic\_no\_planner} & -- & -- & -- & -- & -- & -- & -- \\
-    \texttt{agentic\_no\_kg} & -- & -- & -- & -- & -- & -- & -- \\
-    \texttt{agentic\_no\_verifier} & -- & -- & -- & -- & -- & -- & -- \\
-    \texttt{hybrid\_rerank} \textit{(non-agentic floor)} & -- & -- & -- & -- & -- & -- & -- \\
+    \texttt{agentic\_full} & 250 & 0.432$^{\dagger}$ & 0.510$^{\dagger}$ & -- & -- & 4.26 & 28.3 \\
+    \texttt{agentic\_no\_planner} & 250 & 0.456 & 0.543 & +0.033 [-0.017, +0.086] & 0.186 & 1.35 & 9.7 \\
+    \texttt{agentic\_no\_kg} & 17$^{\ddagger}$ & 0.471 & 0.565 & -- & -- & 3.53 & 10.6 \\
+    \texttt{agentic\_no\_verifier} & 250 & 0.396$^{\downarrow}$ & 0.474$^{\downarrow}$ & -0.037 [-0.065, -0.011] & 0.008 & 2.06 & 16.5 \\
+    \texttt{hybrid\_rerank} \textit{(non-agentic floor)} & 250 & -- & -- & -- & -- & 0.00 & 4.9 \\
     \bottomrule
   \end{tabular}}
 \end{table}
@@ -30,18 +44,18 @@
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \caption{Ablation study on \texttt{twowiki}. No \texttt{agentic\_full} run is available, so no deltas or significance marks can be computed. \texttt{hybrid\_rerank} is repeated from the main results as the non-agentic floor, since removing planning, synthesis and verification reduces the pipeline to it. \texttt{--} marks a configuration that has not been run.}
+  \caption{Ablation study on \texttt{twowiki}. Deltas are measured against \texttt{agentic\_full} ($\dagger$), so a \textit{negative} $\Delta$F1 means the removed component was helping. \textbf{Bold} marks an ablation significantly \textit{better} than the full system and $^{\downarrow}$ one significantly worse (paired bootstrap, 95\% CI of the difference excluding zero); unmarked differences are not significant. Every row covers the same frozen 250-question evaluation slice as the main results -- no ablation was run on a reduced subsample (\texttt{agentic\_full} $n=250$, \texttt{hybrid\_rerank} $n=250$). \texttt{hybrid\_rerank} is repeated from the main results as the non-agentic floor, since removing planning, synthesis and verification reduces the pipeline to it. Latency is the median per question, matching Table~\ref{tab:agent-metrics-twowiki}; the maximum and the wall-clock overruns are reported there. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{hybrid\_rerank} is retrieval-only: it emits a ranking and no answer, so the EM, F1, $\Delta$F1 and $p$ columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened.}
   \label{tab:ablations-twowiki}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
   \begin{tabular}{lrrrrrrr}
     \toprule
-    System & $n$ & EM & F1 & $\Delta$F1 vs.\ full [95\% CI] & $p$ & LLM calls & Latency (s) \\
+    System & $n$ & EM & F1 & $\Delta$F1 vs.\ full [95\% CI] & $p$ & LLM calls & Latency (s) med. \\
     \midrule
-    \texttt{agentic\_full} & -- & -- & -- & -- & -- & -- & -- \\
+    \texttt{agentic\_full} & 250 & 0.224$^{\dagger}$ & 0.267$^{\dagger}$ & -- & -- & 3.80 & 35.4 \\
     \texttt{agentic\_no\_planner} & -- & -- & -- & -- & -- & -- & -- \\
     \texttt{agentic\_no\_kg} & -- & -- & -- & -- & -- & -- & -- \\
     \texttt{agentic\_no\_verifier} & -- & -- & -- & -- & -- & -- & -- \\
-    \texttt{hybrid\_rerank} \textit{(non-agentic floor)} & -- & -- & -- & -- & -- & -- & -- \\
+    \texttt{hybrid\_rerank} \textit{(non-agentic floor)} & 250 & -- & -- & -- & -- & 0.00 & 8.3 \\
     \bottomrule
   \end{tabular}}
 \end{table}

@@ -897,6 +897,24 @@ When `strategy == "comparison"` and both operand evidence sets yield a parseable
 
 ---
 
+> **Warning about the running example.** This document uses *"Which magazine was
+> started first, Arthur's Magazine or First for Women?"* throughout, including in
+> the trace record below. **Neither title exists in the processed corpus** --
+> verified against all 66,581 HotpotQA passages. It is a train-split question,
+> and the corpus is built from the validation split.
+>
+> The consequence is a trap: any run of that question retrieves the wrong
+> passages and looks like a retrieval or routing failure, when in fact the gold
+> evidence is simply not there. The index verification probe in
+> `data/indexes/hotpotqa_index_stats.json` uses it and returns "Woman's Era",
+> which means nothing. Do not cite that probe as evidence of anything.
+>
+> Use an example from the frozen eval slice instead. Chapter 3 uses
+> `5a7793275542992a6e59df04` -- "Which country is the firm that owns Babycham
+> located?" (gold: Babycham s0 -> Accolade Wines s0), both present, and whose
+> hop-2 gold sentence shares zero content terms with the question. Chapter 1
+> uses `5a79be0e5542994f819ef084` (Taylor Swift / *Red*), also verified present.
+
 ## 6. Trace schema
 
 One JSONL record per question, appended to `results/runs/{run_id}/traces.jsonl`. Written with `orjson`. `run_id = f"{config_name}_{dataset}_{utc_timestamp}"`.

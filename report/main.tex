@@ -37,10 +37,34 @@
 \tableofcontents
 
 \begin{abstract}
-% TODO (write last, after Chapter 5)
-% ~200 words. State: the problem, the four-agent architecture, the
-% Verifier->Planner feedback loop as the central contribution, the two
-% benchmarks, and the headline result against the strongest baseline.
+Most retrieval-augmented systems are pipelines: they retrieve once and generate
+once. That structure cannot answer a question whose evidence is distributed
+across documents, because no single document is rankable as the answer. This
+report presents an agentic alternative --- four agents coordinated by an
+explicit state machine, covering all five tasks of the assignment brief. A
+Planner decomposes a question into a validated graph of dependent sub-queries; a
+Retrieval Agent routes each sub-query to BM25, dense, or hybrid search via a
+seven-rule decision table costing zero model calls; a Knowledge Graph Navigator
+traverses an entity graph induced from corpus text to recover bridge entities;
+and a Verifier scores the answer against its own citations using entailment and
+citation grounding. The central contribution is one backward edge: below its
+confidence threshold the Verifier returns a re-plan directive to the Planner
+rather than an answer. That edge is the difference between a pipeline and an
+agent, and it is isolated by ablation rather than asserted. The system is
+evaluated on HotpotQA and 2WikiMultihopQA against lexical, dense, hybrid, and
+agentic baselines, reporting agent-specific cost alongside answer quality.
+Everything runs locally on one consumer GPU with no paid API.
+The result is not the one the architecture was hoping for and is reported as
+measured. On answer accuracy the agentic system does not lead: exact match is
+0.432 on HotpotQA and 0.224 on 2WikiMultihopQA against 0.504 and 0.264 for a
+self-ask baseline that decomposes but never verifies. On attribution it leads
+decisively, reaching supporting-fact F1 of 0.481 and 0.421 against 0.412 and
+0.327 for the strongest retrieval baseline and 0.000 for both generative ones,
+which emit no supporting facts at all, at a citation grounding of 0.960 and
+0.976. Deterministic routing displaced more model calls per question than the
+system spent, and the re-plan loop fired on 47.2\% and 39.2\% of questions. The
+defensible claim is about grounded, auditable answers rather than raw accuracy,
+and the cost of that guarantee is reported beside it.
 \end{abstract}
 
 \input{chapters/ch1_introduction}
