@@ -19,11 +19,37 @@ have no data until late in the schedule, and a zero would read as a measured
 failure rather than an unrun experiment -- the most expensive kind of typo a
 results table can contain.
 
-**Significance is marked, not implied.** A cell is bolded only when a paired
-bootstrap against ``hybrid_rerank`` -- the strongest non-agentic baseline, the
-honest one to beat -- puts the whole 95% interval of the difference on one side
-of zero. A two-point gap on 250 questions is usually noise, and a table that
-bolds it overstates its evidence.
+**A metric a system never attempted renders as** ``--`` **as well.** The three
+retrieval-only baselines emit a ranking and no answer at all; ``score_records``
+scores their empty answer string and so produces ``em = f1 = 0.0``, which is
+arithmetic on a quantity the system never produced. Printed, it asserts that
+they tried and failed, and it hands every generative system a free
+several-hundred-point margin over a floor that does not exist. Answer columns
+are therefore blanked for a run whose trace contains no answer, and the caption
+says explicitly that this ``--`` means *does not attempt answers* rather than
+*not run*. Which of the two a row is showing is not guessable from the glyph,
+so it is stated.
+
+**Significance is marked, not implied, and only between comparable runs.** A
+cell is bolded only when a paired bootstrap puts the whole 95% interval of the
+difference on one side of zero. A two-point gap on 250 questions is usually
+noise, and a table that bolds it overstates its evidence. Two further
+conditions gate the comparison itself:
+
+* *The reference has to be able to hold the metric.* ``hybrid_rerank`` is the
+  strongest non-agentic baseline on retrieval and supporting facts and is the
+  reference there, but it answers no questions, so it cannot be the reference
+  for EM and F1. Those columns are referenced instead to the strongest
+  non-agentic system that does answer, chosen from the runs on disk and named
+  in the caption. Comparing answers against a system that never answered
+  measures the answering, not the improvement.
+* *Both runs have to cover the same evaluation slice.* A run still in flight
+  holds a prefix of the questions, and a paired test between a prefix and the
+  full slice is not a paired test. Such a row keeps its point estimates, is
+  marked ``$^{\ddagger}$`` beside an ``n`` that shows how far it got, and has
+  its deltas, p-values and significance marks withheld. The rule is a
+  comparison of ``n`` against ``datasets.{dataset}.eval_sample``, so a growing
+  run rejoins the comparison by itself the moment it finishes.
 
 **Output is deterministic.** No wall-clock timestamp is written into the
 fragments, only the ``run_id``s they came from, so regenerating from the same
@@ -58,15 +84,19 @@ from .run_eval import AGENTIC_CONFIGS, configurations, runs_root, score_records
 
 __all__ = [
     "ABLATION_REFERENCE",
+    "ANSWER_METRICS",
     "MISSING",
+    "PARTIAL_MARK",
     "REFERENCE_CONFIG",
     "TABLE_FILES",
     "RunData",
     "ablations_table",
     "agent_metrics_table",
     "dataset_stats_tables",
+    "answer_reference",
     "discover_runs",
     "error_analysis_table",
+    "eval_sample_size",
     "fmt",
     "fmt_ci",
     "fmt_count",
@@ -85,10 +115,30 @@ __all__ = [
 #: failure and this is the absence of a measurement.
 MISSING = "--"
 
-#: The system every headline comparison is made against. It is the strongest
-#: non-agentic baseline, so beating it is the claim Chapter 4 has to earn;
-#: comparing against a weaker one would flatter the agentic system for free.
+#: What a run that has not covered the whole evaluation slice is marked with.
+#: It keeps its point estimates and loses its deltas: the numbers are real, the
+#: comparison is not.
+PARTIAL_MARK = r"$^{\ddagger}$"
+
+#: What a supporting-fact score that is a harness artefact rather than a
+#: measurement is marked with. See :meth:`RunData.citations_unresolved`.
+ARTEFACT_MARK = r"$^{\ast}$"
+
+#: The system the retrieval and supporting-fact comparisons are made against.
+#: It is the strongest non-agentic baseline on those metrics, so beating it is
+#: the claim Chapter 4 has to earn; comparing against a weaker one would
+#: flatter the agentic system for free.
+#:
+#: It is deliberately *not* the reference for EM and F1: it is retrieval-only
+#: and answers nothing, so a difference against it is not an improvement in
+#: answering, it is the whole of the other system's score. See
+#: :func:`answer_reference`.
 REFERENCE_CONFIG = "hybrid_rerank"
+
+#: Metrics that presuppose the system emitted an answer. A run that emitted
+#: none has no value for these -- not a zero -- and takes no part in a paired
+#: comparison on them, whether as the reference or as the other side.
+ANSWER_METRICS: frozenset[str] = frozenset({"em", "f1"})
 
 #: The ablation reference: an ablation's delta is only meaningful against the
 #: full system it removes a component from.
@@ -180,6 +230,11 @@ def fmt_count(value: int | float | None) -> str:
         return f"{int(round(float(value))):,}".replace(",", r"\,")
     except (TypeError, ValueError):
         return MISSING
+
+
+def _hours(seconds: float) -> str:
+    """A duration in hours, for a number too large for seconds to convey."""
+    return f"{seconds / 3600.0:.1f}\\,h"
 
 
 def fmt_ci(result: BootstrapResult | None, digits: int = 3) -> str:
@@ -319,6 +374,53 @@ class RunData:
     def n_questions(self) -> int:
         return len(self.records)
 
+    @property
+    def n_answered(self) -> int:
+        """Questions for which the trace holds a non-empty ``final_answer``."""
+        return sum(
+            1 for record in self.records if str(record.get("final_answer") or "").strip()
+        )
+
+    @property
+    def attempts_answers(self) -> bool:
+        """Whether this system produces answers at all.
+
+        Read off the trace rather than off a hard-coded list of retrieval-only
+        configurations, so a baseline that gains or loses a generation stage
+        is classified by what it did, not by what this module was told about it
+        when it was written. ``run_eval._BaselineAdapter`` is explicit that a
+        retrieval-only baseline leaves the answer unset precisely because "it
+        never claimed one"; the scorer nevertheless scores the empty string,
+        and this property is what stops that zero reaching the page.
+        """
+        return self.n_answered > 0
+
+    @property
+    def citations_unresolved(self) -> bool:
+        r"""Whether every citation this run emitted names no evidence it holds.
+
+        ``run_eval.predicted_supporting_facts`` intersects ``citations`` with
+        the evidence pool by ``evidence_id``. When a system writes its
+        citations in a different id namespace than its evidence -- baselines
+        cite passage ids ``p1, p2`` while the adapter stores evidence as
+        ``e1..en`` -- that intersection is empty for every question and SP-EM
+        and SP-F1 come out as a structural ``0.000`` that describes the harness
+        and not the system. It is a real zero in the arithmetic and a false one
+        in the report, so it is flagged rather than blanked: blanking it would
+        hide the defect, and printing it unflagged would attribute it to the
+        system.
+        """
+        cited = 0
+        for record in self.records:
+            citations = set(record.get("citations") or ())
+            if not citations:
+                continue
+            cited += 1
+            ids = {e.get("evidence_id") for e in (record.get("evidence") or ())}
+            if citations & ids:
+                return False
+        return cited > 0
+
     def metric(self, name: str) -> dict[str, float]:
         """``{qid: value}`` for one metric -- the shape both bootstraps want."""
         return {
@@ -335,6 +437,40 @@ class RunData:
     def agent_metrics(self) -> AgentMetrics:
         """Aggregate of the per-question ``metrics`` blocks in the trace."""
         return summarise_agent_metrics([r.get("metrics") or {} for r in self.records])
+
+    def series(self, name: str) -> list[tuple[str, float]]:
+        """``(qid, value)`` for one field of the per-question ``metrics`` block.
+
+        The per-question values, not the aggregate: a summary statistic that is
+        robust to an outlier cannot be recovered from a mean that has already
+        absorbed it.
+        """
+        out: list[tuple[str, float]] = []
+        for record in self.records:
+            metrics = record.get("metrics") or {}
+            value = metrics.get(name)
+            if value is None:
+                continue
+            try:
+                out.append((str(record.get("qid") or ""), float(value)))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def median(self, name: str) -> float | None:
+        """Median of one per-question agent metric, or ``None`` if never recorded."""
+        values = sorted(v for _, v in self.series(name))
+        if not values:
+            return None
+        middle = len(values) // 2
+        if len(values) % 2:
+            return values[middle]
+        return (values[middle - 1] + values[middle]) / 2.0
+
+    def worst(self, name: str) -> tuple[str, float] | None:
+        """The ``(qid, value)`` with the largest value, or ``None``."""
+        series = self.series(name)
+        return max(series, key=lambda pair: pair[1]) if series else None
 
 
 def load_run(run_dir: Path, *, golds: Mapping[str, GoldAnswer], cfg: Config) -> RunData:
@@ -419,6 +555,70 @@ def discover_runs(
 
 
 # ---------------------------------------------------------------------------
+# Comparability: sample size and whether the system answers at all
+# ---------------------------------------------------------------------------
+
+def eval_sample_size(dataset: str, *, cfg: Config) -> int | None:
+    """The size of the frozen evaluation slice for ``dataset``, or ``None``.
+
+    Read from ``datasets.{dataset}.eval_sample`` on every call rather than
+    frozen into a constant, because it is the number the sample was drawn with
+    and the number a run has to reach to be comparable. A run in flight is
+    therefore judged against the design, not against whichever sibling run
+    happens to sit beside it in the table.
+    """
+    value = cfg.get(f"datasets.{dataset}.eval_sample", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_partial(run: RunData | None, expected: int | None) -> bool:
+    """Whether ``run`` covers less than the whole evaluation slice.
+
+    Purely a comparison of counts, so a sweep that is still writing rows
+    rejoins the comparison of its own accord the moment it reaches the slice
+    size -- there is nothing to update by hand when it finishes.
+    """
+    return run is not None and expected is not None and run.n_questions < expected
+
+
+def answer_reference(
+    runs: Mapping[str, RunData],
+    *,
+    config_names: Sequence[str],
+    expected: int | None,
+) -> str | None:
+    """The non-agentic system EM and F1 are compared against, or ``None``.
+
+    :data:`REFERENCE_CONFIG` cannot serve: it is retrieval-only, so a
+    ``$\\Delta$F1`` against it is just the other system's F1 with a plus sign
+    in front, and every generative row would carry a large, significant,
+    meaningless improvement. The honest reference for an answer metric is the
+    strongest baseline that *answers*, so it is chosen here from the runs on
+    disk -- highest mean F1 among complete, non-agentic, answering runs, ties
+    broken by configuration order -- and named in the caption. Choosing it
+    from the data rather than declaring it means the comparison cannot quietly
+    become one against a system that was later found not to answer.
+    """
+    best: tuple[float, int, str] | None = None
+    for index, name in enumerate(config_names):
+        run = runs.get(name)
+        if run is None or name in AGENTIC_CONFIGS:
+            continue
+        if not run.attempts_answers or _is_partial(run, expected):
+            continue
+        score = run.mean("f1")
+        if score is None:
+            continue
+        candidate = (float(score), -index, name)
+        if best is None or candidate > best:
+            best = candidate
+    return best[2] if best is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Comparison plumbing
 # ---------------------------------------------------------------------------
 
@@ -437,29 +637,52 @@ class _Comparisons:
 def _compare_all(
     runs: Mapping[str, RunData],
     *,
-    reference: str,
+    reference: str | None,
     metrics: Sequence[str],
     samples: int,
     seed: int,
+    expected: int | None = None,
 ) -> _Comparisons:
-    """Paired-bootstrap every configuration against ``reference``.
+    """Paired-bootstrap every eligible configuration against ``reference``.
 
-    Only overlapping qids are compared -- :func:`paired_bootstrap` enforces that
-    -- so a 250-question reference and a five-question smoke run are compared on
-    the five they share and the interval widens accordingly, rather than
-    claiming a precision the overlap does not support.
+    Two eligibility rules, both of which suppress a comparison rather than
+    weaken it, because the alternative in each case is a number that looks like
+    evidence and is not:
+
+    *Answer metrics need two answering systems.* A run that emitted no answer
+    has ``em = f1 = 0.0`` for every question by construction, and pairing it
+    against anything yields exactly the other system's score with a confidence
+    interval that excludes zero. That is not a finding about the difference,
+    it is the definition of the zero. Such a run is skipped for
+    :data:`ANSWER_METRICS`, and if the *reference* is the one that does not
+    answer, the whole metric is dropped and the column renders ``--``.
+
+    *A paired test needs the same questions.* :func:`paired_bootstrap` would
+    happily compare a 250-question reference with a 212-question prefix on the
+    212 they share, but "the 212 that happened to finish first" is not the
+    frozen slice the design specifies and the other rows were scored on, and a
+    delta on it moves every time the sweep writes another line. An incomplete
+    run is therefore excluded outright: its point estimates are still printed,
+    its comparisons are not.
     """
-    reference_run = runs.get(reference)
-    comparisons = _Comparisons(reference=reference, available=reference_run is not None)
-    if reference_run is None:
+    comparisons = _Comparisons(reference=reference or "", available=False)
+    if reference is None:
         return comparisons
+    reference_run = runs.get(reference)
+    if reference_run is None or _is_partial(reference_run, expected):
+        return comparisons
+    comparisons.available = True
     for metric in metrics:
+        if metric in ANSWER_METRICS and not reference_run.attempts_answers:
+            continue
         base = reference_run.metric(metric)
         if not base:
             continue
         row: dict[str, ComparisonResult] = {}
         for config_name, run in runs.items():
-            if config_name == reference:
+            if config_name == reference or _is_partial(run, expected):
+                continue
+            if metric in ANSWER_METRICS and not run.attempts_answers:
                 continue
             other = run.metric(metric)
             if not other:
@@ -485,20 +708,117 @@ def _grouped(config_names: Sequence[str]) -> list[tuple[str | None, list[str]]]:
     return groups
 
 
-def _significance_note(comparisons: _Comparisons) -> str:
-    """The legend that keeps the marks readable -- and checkable."""
+def _significance_note(
+    comparisons: _Comparisons, *, what: str = "", legend: bool = True
+) -> str:
+    """The legend that keeps the marks readable -- and checkable.
+
+    ``legend=False`` names the reference without repeating the mark key, for
+    the second and later reference in the same caption: a caption that states
+    the same legend twice is a caption nobody finishes reading.
+    """
+    subject = f" for the {what}" if what else ""
     if not comparisons.available:
         return (
-            f"No {_tt(comparisons.reference)} run is available, so no significance marks "
-            f"are shown. {_tt(MISSING)} marks a configuration that has not been run."
+            f"No usable reference run is available{subject}, so no significance marks "
+            "are shown there."
         )
-    return (
-        f"Reference system {_tt(comparisons.reference)} is marked $\\dagger$. "
-        r"\textbf{Bold} = significantly better than the reference, "
+    head = f"Reference system{subject}: {_tt(comparisons.reference)}, marked $\\dagger$."
+    if not legend:
+        return head
+    return head + (
+        r" \textbf{Bold} = significantly better than the reference, "
         r"$^{\downarrow}$ = significantly worse "
         r"(paired bootstrap, 95\% CI of the paired difference excluding zero). "
-        f"Unmarked differences are not significant. {_tt(MISSING)} marks a "
-        "configuration that has not been run."
+        "Unmarked differences are not significant."
+    )
+
+
+def _flagged(text: str, flag: str) -> str:
+    r"""Append a footnote mark to a cell, unless the cell is :data:`MISSING`.
+
+    Adjacent superscripts are merged into one group: ``$^{\downarrow}$$^{\ast}$``
+    typesets as two separate scripts with a gap between them, which reads as
+    two marks on two different things.
+    """
+    if not flag or text == MISSING:
+        return text
+    if text.endswith(r"}$") and flag.startswith(r"$^{") and flag.endswith(r"}$"):
+        return text[:-2] + flag[3:-2] + r"}$"
+    return text + flag
+
+
+def _names(config_names: Sequence[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c`` -- a list a caption can read aloud."""
+    marked = [_tt(name) for name in config_names]
+    if len(marked) < 2:
+        return "".join(marked)
+    return ", ".join(marked[:-1]) + " and " + marked[-1]
+
+
+def _unrun_note() -> str:
+    return f"{_tt(MISSING)} across a whole row marks a configuration that has not been run."
+
+
+def _no_answer_note(
+    runs: Mapping[str, RunData], *, config_names: Sequence[str], columns: str
+) -> str:
+    """Say which rows are blank because the system does not answer, not because it did not run.
+
+    Both states print the same glyph and mean opposite things, so which one a
+    reader is looking at is stated rather than left to be inferred from the
+    system's name.
+    """
+    silent = [n for n in config_names if (r := runs.get(n)) is not None and not r.attempts_answers]
+    if not silent:
+        return ""
+    return (
+        f" {_names(silent)} {'is' if len(silent) == 1 else 'are'} retrieval-only: "
+        f"{'it emits' if len(silent) == 1 else 'they emit'} a ranking and no answer, so the "
+        f"{columns} columns show {_tt(MISSING)} because there is no answer to score, "
+        "not because the run is absent. Scoring the unattempted answer would report "
+        f"{fmt(0.0)} and assert a failed attempt that never happened."
+    )
+
+
+def _partial_note(
+    runs: Mapping[str, RunData], *, config_names: Sequence[str], expected: int | None
+) -> str:
+    """Say which rows are a prefix of the slice, and that they are not compared."""
+    partial = [
+        f"{_tt(n)} ($n={runs[n].n_questions}$)"
+        for n in config_names
+        if n in runs and _is_partial(runs[n], expected)
+    ]
+    if not partial:
+        return ""
+    return (
+        f" \\textbf{{{PARTIAL_MARK} marks a preliminary row}}: {', '.join(partial)} "
+        f"had not covered the full {expected}-question evaluation slice when this table "
+        "was generated, so the point estimates are over the questions completed so far "
+        "and every delta, $p$-value and significance mark against it is withheld -- a "
+        "paired test between a prefix and the full slice is not a paired test. These "
+        "numbers will move; they are not final results."
+    )
+
+
+def _artefact_note(runs: Mapping[str, RunData], *, config_names: Sequence[str]) -> str:
+    """Flag supporting-fact scores that measure the harness rather than the system."""
+    broken = [n for n in config_names if (r := runs.get(n)) is not None and r.citations_unresolved]
+    if not broken:
+        return ""
+    return (
+        f" \\textbf{{{ARTEFACT_MARK} marks a score measured differently, not a worse "
+        f"system}}: every record of {_names(broken)} cites passage identifiers "
+        r"(\texttt{p1}, \texttt{p2}) that name none of the evidence identifiers the "
+        r"same record stores, because the adapter keys evidence \texttt{e1..en}. The "
+        r"citation signal is therefore unusable and \texttt{predicted\_supporting\_facts} "
+        "falls back to scoring the full evidence pool rather than the cited subset. "
+        "That fallback favours recall and pays for it in precision, so these scores "
+        "are not strictly comparable to a system whose citations resolve and which is "
+        "judged on what it actually cited. Before the fallback was made conditional on "
+        "citations resolving, the same mismatch produced exact zeros that read as a "
+        r"categorical finding; see \texttt{docs/report-audit.md}."
     )
 
 
@@ -521,14 +841,31 @@ def main_results_tables(
     does not fit an A4 text block, and shrinking one until it does produces a
     table nobody checks. Split by metric family, each half stays readable.
     """
-    comparisons = _compare_all(
+    expected = eval_sample_size(dataset, cfg=cfg)
+    answer_ref = answer_reference(runs, config_names=config_names, expected=expected)
+    answer_comparisons = _compare_all(
         runs,
-        reference=REFERENCE_CONFIG,
-        metrics=("em", "f1", "sp_f1", "recall@10", "ndcg@10"),
+        reference=answer_ref,
+        metrics=("em", "f1"),
         samples=samples,
         seed=seed,
+        expected=expected,
     )
-    note = _significance_note(comparisons)
+    support_comparisons = _compare_all(
+        runs,
+        reference=REFERENCE_CONFIG,
+        metrics=("sp_f1", "recall@10", "ndcg@10"),
+        samples=samples,
+        seed=seed,
+        expected=expected,
+    )
+    answer_note = _significance_note(answer_comparisons, what="EM and F1 columns")
+    support_note = _significance_note(
+        support_comparisons, what="SP-F1 column", legend=False
+    )
+    retrieval_note = _significance_note(support_comparisons, what="retrieval columns")
+    partial_note = _partial_note(runs, config_names=config_names, expected=expected)
+    artefact_note = _artefact_note(runs, config_names=config_names)
 
     def interval(run: RunData | None, metric: str) -> BootstrapResult | None:
         if run is None:
@@ -541,19 +878,30 @@ def main_results_tables(
         rows: list[list[str]] = []
         for name in names:
             run = runs.get(name)
-            is_ref = name == REFERENCE_CONFIG
+            answers = run is not None and run.attempts_answers
+            partial = _is_partial(run, expected)
+            artefact = run is not None and run.citations_unresolved
+            is_answer_ref = answers and name == answer_ref
+            is_support_ref = name == REFERENCE_CONFIG
+            n_cell = MISSING if run is None else fmt_int(run.n_questions)
+            if partial:
+                n_cell = _flagged(n_cell, PARTIAL_MARK)
             rows.append([
                 _tt(name),
-                fmt_int(run.n_questions) if run is not None else MISSING,
-                mark(run.mean("em") if run else None,
-                     comparisons.get(name, "em"), reference=is_ref),
-                mark(run.mean("f1") if run else None,
-                     comparisons.get(name, "f1"), reference=is_ref),
-                fmt_ci(interval(run, _CI_METRIC)),
-                fmt(run.mean("sp_em") if run else None),
-                mark(run.mean("sp_f1") if run else None,
-                     comparisons.get(name, "sp_f1"), reference=is_ref),
-                MISSING if is_ref else fmt_delta(comparisons.get(name, "f1")),
+                n_cell,
+                mark(run.mean("em") if answers else None,
+                     answer_comparisons.get(name, "em"), reference=is_answer_ref),
+                mark(run.mean("f1") if answers else None,
+                     answer_comparisons.get(name, "f1"), reference=is_answer_ref),
+                fmt_ci(interval(run, _CI_METRIC)) if answers else MISSING,
+                _flagged(fmt(run.mean("sp_em") if run else None),
+                         ARTEFACT_MARK if artefact else ""),
+                _flagged(
+                    mark(run.mean("sp_f1") if run else None,
+                         support_comparisons.get(name, "sp_f1"), reference=is_support_ref),
+                    ARTEFACT_MARK if artefact else "",
+                ),
+                MISSING if is_answer_ref else fmt_delta(answer_comparisons.get(name, "f1")),
             ])
         answer_groups.append((title, rows))
 
@@ -568,7 +916,11 @@ def main_results_tables(
             f"Answer quality on {_tt(dataset)}. Exact match and token-level F1 follow the "
             "official HotpotQA evaluation script, including its yes/no short circuit; "
             r"SP-EM and SP-F1 are set metrics over $(\textit{title}, \textit{sent\_id})$ "
-            f"supporting-fact pairs. $n$ is the number of questions scored. {note}"
+            f"supporting-fact pairs. $n$ is the number of questions scored. "
+            f"{answer_note} {support_note} {_unrun_note()}"
+            + _no_answer_note(runs, config_names=config_names, columns="EM, F1 and $\\Delta$F1")
+            + partial_note
+            + artefact_note
         ),
         label=f"tab:main-answer-{dataset}",
     )
@@ -580,13 +932,13 @@ def main_results_tables(
             run = runs.get(name)
             is_ref = name == REFERENCE_CONFIG
             rows.append([
-                _tt(name),
+                _flagged(_tt(name), PARTIAL_MARK if _is_partial(run, expected) else ""),
                 fmt(run.mean("recall@2") if run else None),
                 fmt(run.mean("recall@5") if run else None),
                 mark(run.mean("recall@10") if run else None,
-                     comparisons.get(name, "recall@10"), reference=is_ref),
+                     support_comparisons.get(name, "recall@10"), reference=is_ref),
                 mark(run.mean("ndcg@10") if run else None,
-                     comparisons.get(name, "ndcg@10"), reference=is_ref),
+                     support_comparisons.get(name, "ndcg@10"), reference=is_ref),
                 fmt_ci(interval(run, _RETRIEVAL_CI_METRIC)),
                 fmt(run.mean("mrr") if run else None),
             ])
@@ -604,7 +956,8 @@ def main_results_tables(
             "ranking and judged against the gold supporting-fact documents. A multi-hop "
             "system issues several queries, so ``the ranking'' is not directly observed; "
             "fusing them is how the orchestrator itself pools evidence, and it needs no "
-            f"score calibration between BM25 and cosine. {note}"
+            f"score calibration between BM25 and cosine. {retrieval_note} {_unrun_note()}"
+            + partial_note
         ),
         label=f"tab:main-retrieval-{dataset}",
     )
@@ -619,6 +972,7 @@ def agent_metrics_table(
     runs: Mapping[str, RunData],
     dataset: str,
     *,
+    cfg: Config,
     config_names: Sequence[str],
 ) -> str:
     """Agent-specific cost, reported beside quality and never instead of it.
@@ -628,25 +982,48 @@ def agent_metrics_table(
     ``meta.json`` reports a warm cache are called out in the caption, because a
     warm-cache latency is not comparable to a cold-cache one and the difference
     is invisible in the number itself.
+
+    **Latency is reported as a median beside its maximum, never as a bare
+    mean.** Every other column here is a small bounded count -- the orchestrator
+    caps LLM calls, sub-queries and cycles per question -- so one pathological
+    question can move their means by at most a cap divided by $n$. Latency has
+    no such cap in practice: one HotpotQA question hung inside a single blocking
+    call for 18.3 hours against a 300-second budget, which alone lifts the
+    ``agentic_full`` mean from a median of 28.3 s to 295.1 s. Printed as
+    "latency per question" that mean is wrong by an order of magnitude in the
+    direction that makes the agentic system look uncompetitive, and it is
+    exactly the number a reader quotes. The median is what a question actually
+    costs; the maximum column and the caption keep the hang visible, because
+    trimming it away would hide a real defect rather than report it.
     """
+    expected = eval_sample_size(dataset, cfg=cfg)
+    budget = cfg.get("orchestrator.max_wall_clock_s", None)
     groups: list[tuple[str | None, Sequence[Sequence[str]]]] = []
     warm: list[str] = []
+    hangs: list[str] = []
     for title, names in _grouped(config_names):
         rows: list[list[str]] = []
         for name in names:
             run = runs.get(name)
             if run is None:
-                rows.append([_tt(name)] + [MISSING] * 8)
+                rows.append([_tt(name)] + [MISSING] * 9)
                 continue
             if not bool(run.meta.get("cache_cold", True)):
                 warm.append(name)
             m = run.agent_metrics()
+            worst = run.worst("latency_s")
+            if worst is not None and budget is not None and worst[1] > float(budget):
+                hangs.append(
+                    f"{_tt(name)} ({fmt(worst[1], 1)}\\,s on "
+                    f"{_tt(worst[0])}, {_hours(worst[1])})"
+                )
             rows.append([
-                _tt(name),
+                _flagged(_tt(name), PARTIAL_MARK if _is_partial(run, expected) else ""),
                 fmt(m.llm_calls, 2),
                 fmt(m.llm_calls_saved, 2),
                 fmt(m.tool_calls, 2),
-                fmt(m.latency_s, 1),
+                fmt(run.median("latency_s"), 1),
+                fmt(worst[1] if worst else None, 1),
                 fmt(m.plan_depth, 2),
                 fmt(m.n_subqueries, 2),
                 fmt(m.replan_rate, 3),
@@ -661,11 +1038,24 @@ def agent_metrics_table(
             f" \\textbf{{Latency for {names} came from a warm LLM cache and is not "
             r"comparable}}; \texttt{meta.json} records the cache state of every leg."
         )
+    hang_note = ""
+    if hangs:
+        hang_note = (
+            f" \\textbf{{One or more questions overran the "
+            f"{fmt_int(budget)}\\,s \\texttt{{orchestrator.max\\_wall\\_clock\\_s}} "
+            f"budget}}: {', '.join(hangs)}. The budget is evidently only tested between "
+            "state transitions, so it cannot pre-empt a call that blocks inside one; "
+            "this is a system defect and not only a reporting one, and it is why the "
+            r"central column is a median. The arithmetic mean of \texttt{latency\_s} on "
+            "such a run is that single question divided by $n$ and describes nothing "
+            r"that happens per question. See \texttt{docs/report-audit.md}."
+        )
     return table(
-        colspec="lrrrrrrrr",
+        colspec="lrrrrrrrrr",
         header=_header(
-            "System", "LLM calls", "Saved", "Tool calls", "Latency (s)",
-            "Plan depth", "Sub-queries", "Re-plan rate", "Cite grounding",
+            "System", "LLM calls", "Saved", "Tool calls", "Latency (s) med.",
+            "Latency (s) max", "Plan depth", "Sub-queries", "Re-plan rate",
+            "Cite grounding",
         ),
         groups=groups,
         caption=(
@@ -675,9 +1065,16 @@ def agent_metrics_table(
             r"\textit{Re-plan rate} is the fraction of questions that triggered at least "
             r"one re-plan, not the mean count; \textit{Cite grounding} is averaged only "
             "over questions that produced a non-empty answer, so it cannot be inflated by "
-            "abstentions. Latency is only comparable between cold-cache runs."
+            r"abstentions. \textbf{Latency is the median per question, with the maximum "
+            r"beside it}, and every other column is a mean: latency is the one unbounded "
+            "quantity here, so it is the one a single hung question can dominate, and a "
+            "mean of it would report that question rather than the system. The maximum is "
+            "printed rather than trimmed so the outlier stays in view. Latency is only "
+            "comparable between cold-cache runs."
             + caveat
-            + f" {_tt(MISSING)} marks a configuration that has not been run."
+            + hang_note
+            + f" {_unrun_note()}"
+            + _partial_note(runs, config_names=config_names, expected=expected)
         ),
         label=f"tab:agent-metrics-{dataset}",
     )
@@ -691,6 +1088,7 @@ def ablations_table(
     runs: Mapping[str, RunData],
     dataset: str,
     *,
+    cfg: Config,
     samples: int,
     seed: int,
 ) -> str:
@@ -702,9 +1100,10 @@ def ablations_table(
     helping, and it is reported whether or not it flatters the architecture --
     an honestly analysed negative ablation is worth more than a suppressed one.
     """
+    expected = eval_sample_size(dataset, cfg=cfg)
     comparisons = _compare_all(
         runs, reference=ABLATION_REFERENCE, metrics=("em", "f1"),
-        samples=samples, seed=seed,
+        samples=samples, seed=seed, expected=expected,
     )
 
     ordered: list[str] = []
@@ -716,21 +1115,28 @@ def ablations_table(
     for name in ordered:
         run = runs.get(name)
         is_ref = name == ABLATION_REFERENCE
+        answers = run is not None and run.attempts_answers
+        partial = _is_partial(run, expected)
         agent = run.agent_metrics() if run is not None else None
         label = _tt(name)
         if name == REFERENCE_CONFIG:
             label += r" \textit{(non-agentic floor)}"
+        n_cell = MISSING if run is None else fmt_int(run.n_questions)
+        if partial:
+            n_cell = _flagged(n_cell, PARTIAL_MARK)
         rows.append([
             label,
-            fmt_int(run.n_questions) if run is not None else MISSING,
-            mark(run.mean("em") if run else None,
+            n_cell,
+            mark(run.mean("em") if answers else None,
                  comparisons.get(name, "em"), reference=is_ref),
-            mark(run.mean("f1") if run else None,
+            mark(run.mean("f1") if answers else None,
                  comparisons.get(name, "f1"), reference=is_ref),
             MISSING if is_ref else fmt_delta(comparisons.get(name, "f1")),
             MISSING if is_ref else fmt_p(comparisons.get(name, "f1")),
             fmt(agent.llm_calls, 2) if agent else MISSING,
-            fmt(agent.latency_s, 1) if agent else MISSING,
+            # Median, matching tab:agent-metrics: the mean of an unbounded
+            # per-question duration is one hung question divided by n.
+            fmt(run.median("latency_s") if run is not None else None, 1),
         ])
 
     if comparisons.available:
@@ -747,19 +1153,53 @@ def ablations_table(
             f"No {_tt(ABLATION_REFERENCE)} run is available, so no deltas or significance "
             "marks can be computed."
         )
+    # The subsample sentence Chapter 2 promises the reader will find here. It
+    # is built from the runs rather than from the plan, so a subsample that was
+    # designed and then not used cannot be reported as though it had been.
+    present = [(name, runs[name].n_questions) for name in ordered if name in runs]
+    if present:
+        def stated_size(name: str, n: int) -> str:
+            # One math group, not two: ``$n=123$$^{\ddagger}$`` typesets a gap
+            # between the count and the mark that belongs to it.
+            mark = r"^{\ddagger}" if expected is not None and n < expected else ""
+            return f"{_tt(name)} $n={n}{mark}$"
+
+        stated = ", ".join(stated_size(name, n) for name, n in present)
+        sizes = {n for _, n in present}
+        if expected is not None and sizes == {expected}:
+            sample_note = (
+                f" Every row covers the same frozen {expected}-question evaluation slice "
+                f"as the main results -- no ablation was run on a reduced subsample "
+                f"({stated})."
+            )
+        else:
+            sample_note = (
+                f" Sample sizes are stated per row and are not assumed equal: {stated}"
+                + (f", against a {expected}-question evaluation slice." if expected else ".")
+            )
+    else:
+        sample_note = ""
+
     return table(
         colspec="lrrrrrrr",
         header=_header(
             "System", "$n$", "EM", "F1", r"$\Delta$F1 vs.\ full [95\% CI]", "$p$",
-            "LLM calls", "Latency (s)",
+            "LLM calls", "Latency (s) med.",
         ),
         groups=[(None, rows)],
         caption=(
-            f"Ablation study on {_tt(dataset)}. {note} "
-            f"{_tt(REFERENCE_CONFIG)} is repeated from the main results as the "
+            f"Ablation study on {_tt(dataset)}. {note}"
+            + sample_note
+            + f" {_tt(REFERENCE_CONFIG)} is repeated from the main results as the "
             "non-agentic floor, since removing planning, synthesis and verification "
-            f"reduces the pipeline to it. {_tt(MISSING)} marks a configuration that has "
-            "not been run."
+            "reduces the pipeline to it. Latency is the median per question, matching "
+            r"Table~\ref{tab:agent-metrics-" + dataset + "}; the maximum and the "
+            "wall-clock overruns are reported there. "
+            + _unrun_note()
+            + _no_answer_note(
+                runs, config_names=ordered, columns="EM, F1, $\\Delta$F1 and $p$"
+            )
+            + _partial_note(runs, config_names=ordered, expected=expected)
         ),
         label=f"tab:ablations-{dataset}",
     )
@@ -961,9 +1401,29 @@ def error_analysis_table(
         "the permissive direction, which can blame the decomposition for a genuine "
         "corpus gap."
     )
+    expected = eval_sample_size(dataset, cfg=cfg)
+    silent = [c for c in present if not runs[c].attempts_answers]
+    no_answer_note = (
+        ""
+        if not silent
+        else (
+            f" {_names(silent)} emit no answer at all, so their "
+            r"\textit{Correct} is structurally $0$ and every question is counted as an "
+            "error; the informative rows for them are the retrieval labels, not the "
+            "accuracy."
+        )
+    )
     return table(
         colspec="l" + "r" * len(columns),
-        header=_header("Label", *[_tt(c) if c else MISSING for c in columns]),
+        header=_header(
+            "Label",
+            *[
+                _flagged(_tt(c), PARTIAL_MARK if _is_partial(runs.get(c), expected) else "")
+                if c
+                else MISSING
+                for c in columns
+            ],
+        ),
         groups=[
             ("Failure labels: count (share of all questions)", label_rows),
             ("Totals", total_rows),
@@ -979,6 +1439,8 @@ def error_analysis_table(
             "unreachable, and it is the count that makes the "
             r"Verifier$\rightarrow$Planner loop falsifiable. "
             f"{corpus_note} A configuration with no run has no column."
+            + no_answer_note
+            + _partial_note(runs, config_names=present, expected=expected)
         ),
         label=f"tab:error-analysis-{dataset}",
     )
@@ -988,13 +1450,24 @@ def error_analysis_table(
 # Generation
 # ---------------------------------------------------------------------------
 
-def _preamble(title: str, runs: Mapping[str, Mapping[str, RunData]]) -> str:
+def _preamble(
+    title: str,
+    runs: Mapping[str, Mapping[str, RunData]],
+    expected: Mapping[str, int | None] | None = None,
+) -> str:
     """A provenance header naming the runs the numbers came from.
 
     Deliberately carries no wall-clock timestamp: regenerating from unchanged
     runs must produce a byte-identical file, so that a diff under
     ``results/tables/`` always means a number actually moved.
+
+    A source line whose ``n`` is short of the evaluation slice is annotated
+    ``PRELIMINARY`` here as well as in the caption. The header is where a
+    reader -- or ``tests/test_report_integrity.py`` -- looks to find out which
+    run a number came from, so it is the one place where a partial run must not
+    look like a finished one.
     """
+    expected = expected or {}
     lines = [
         f"% {title}",
         "% GENERATED by src/agentic_ir/eval/tables.py -- do not edit by hand.",
@@ -1002,8 +1475,19 @@ def _preamble(title: str, runs: Mapping[str, Mapping[str, RunData]]) -> str:
         "% Requires \\usepackage{booktabs} and \\usepackage{graphicx};",
         "% report/main.tex already loads both.",
     ]
+
+    def source_line(dataset: str, config: str, run: RunData) -> str:
+        line = f"%   {dataset}/{config}: {run.run_id} ({run.n_questions} questions)"
+        want = expected.get(dataset)
+        if _is_partial(run, want):
+            line += (
+                f"  PRELIMINARY: short of the {want}-question evaluation slice; "
+                "deltas and significance withheld"
+            )
+        return line
+
     sources = [
-        f"%   {dataset}/{config}: {run.run_id} ({run.n_questions} questions)"
+        source_line(dataset, config, run)
         for dataset, by_config in sorted(runs.items())
         for config, run in sorted(by_config.items())
     ]
@@ -1053,11 +1537,12 @@ def generate_all(
             except Exception:  # noqa: BLE001 - the taxonomy degrades, it does not fail
                 titles[dataset] = None
 
+    expected = {d: eval_sample_size(d, cfg=cfg) for d in datasets}
     written: dict[str, Path] = {}
 
     def write(filename: str, title: str, body: str) -> None:
         path = target / filename
-        path.write_text(_preamble(title, runs) + body + "\n", encoding="utf-8")
+        path.write_text(_preamble(title, runs, expected) + body + "\n", encoding="utf-8")
         written[filename] = path
 
     write(
@@ -1074,13 +1559,17 @@ def generate_all(
         "agent_metrics.tex",
         "Chapter 4 -- agent-specific measures",
         "\n\n".join(
-            agent_metrics_table(runs[d], d, config_names=config_names) for d in datasets
+            agent_metrics_table(runs[d], d, cfg=cfg, config_names=config_names)
+            for d in datasets
         ),
     )
     write(
         "ablations.tex",
         "Chapter 4 -- ablation study",
-        "\n\n".join(ablations_table(runs[d], d, samples=samples, seed=seed) for d in datasets),
+        "\n\n".join(
+            ablations_table(runs[d], d, cfg=cfg, samples=samples, seed=seed)
+            for d in datasets
+        ),
     )
     write(
         "dataset_stats.tex",

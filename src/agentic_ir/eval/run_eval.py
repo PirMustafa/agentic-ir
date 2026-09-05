@@ -360,6 +360,115 @@ def config_for(config_name: str, cfg: Config | None = None) -> Config:
     return cfg.with_overrides(overrides) if overrides else cfg
 
 
+class _BaselineAdapter:
+    """Present a ``BaselineBase`` through the harness's orchestrator-shaped seam.
+
+    ``baselines/`` and this harness were built in parallel and settled on
+    different call shapes: baselines expose
+    ``run(question, top_k=None, *, qid) -> BaselineResult`` while the harness
+    calls ``run(qid, question, gold=, state=) -> QuestionState``. Rather than
+    bend either side, translate here.
+
+    The translation is deliberately into a real ``QuestionState`` and not a
+    shortcut into the record writer: every configuration in a sweep then passes
+    through the *same* trace writer and the same scorer, which is the property
+    that makes the Chapter 4 rows comparable at all. A separate baseline
+    writing path would be the obvious place for the two to silently drift.
+    """
+
+    def __init__(self, baseline: Any, *, dataset: str, config_name: str) -> None:
+        self._baseline = baseline
+        self._dataset = dataset
+        self._config_name = config_name
+        self.name = getattr(baseline, "name", config_name)
+        self.transitions: tuple[str, ...] = ()
+
+    def run(
+        self,
+        qid: str,
+        question: str,
+        *,
+        gold: Any = None,
+        state: Any = None,
+        **_: Any,
+    ) -> QuestionState:
+        from ..state import QuestionState as _QS
+        from ..types import (
+            AnswerCandidate,
+            Evidence,
+            Plan,
+            RetrievalResult,
+            ScoredPassage,
+            SubQuery,
+            ToolSelection,
+        )
+
+        st = state or _QS(
+            qid=qid, question=question, dataset=self._dataset,
+            config_name=self._config_name, gold=gold,
+        )
+        result = self._baseline.run(question, qid=qid)
+
+        # Budget counters drive metrics(); take them from what actually ran.
+        st.budget.llm_calls = int(result.llm_calls)
+        st.budget.tool_calls = int(result.tool_calls)
+
+        subqueries, hop_ids = [], []
+        for i, hop in enumerate(result.hops, start=1):
+            sq_id = f"q{i}"
+            hop_ids.append(sq_id)
+            subqueries.append(SubQuery(id=sq_id, text=getattr(hop, "query", question)))
+            st.results[sq_id] = RetrievalResult(
+                subquery_id=sq_id,
+                query_text=getattr(hop, "query", question),
+                selection=ToolSelection(
+                    tool=getattr(hop, "tool", "hybrid_search"),
+                    selector="fallback",
+                    rule_id=f"baseline:{self.name}",
+                    rerank_applied=bool(getattr(hop, "rerank_applied", False)),
+                ),
+                passages=tuple(getattr(hop, "passages", ()) or ()),
+                latency_s=float(getattr(hop, "latency_s", 0.0) or 0.0),
+            )
+        if not subqueries:  # a baseline that retrieved nothing still needs a plan
+            subqueries = [SubQuery(id="q1", text=question)]
+        st.plans.append(
+            Plan(
+                question=question,
+                subqueries=tuple(subqueries),
+                strategy="single_hop" if len(subqueries) < 2 else "bridge",
+                origin="fallback_rule",
+                depth=len(subqueries),
+            )
+        )
+
+        for j, (title, sent_id) in enumerate(result.supporting_facts, start=1):
+            st.evidence[f"e{j}"] = Evidence(
+                evidence_id=f"e{j}", kind="passage", text="", score=0.0,
+                subquery_ids=tuple(hop_ids[-1:]), provenance="hybrid",
+                title=title, sent_id=int(sent_id),
+            )
+
+        # answer is None for a retrieval-only baseline: it never claimed one,
+        # and scoring an unattempted answer as EM=0 would be arithmetic on a
+        # quantity the system did not produce.
+        if result.answer is not None:
+            st.candidates.append(
+                AnswerCandidate(
+                    answer=result.answer,
+                    answer_sentence=result.answer_sentence or result.answer,
+                    citations=tuple(result.citations),
+                    cycle=0,
+                    origin="fallback_rule",
+                    confidence=1.0,
+                )
+            )
+        st.errors.extend(result.errors)
+        st.terminated_by = "baseline_degraded" if result.degraded else "baseline"
+        st.state = "DONE"
+        return st
+
+
 def load_baseline(
     config_name: str,
     *,
@@ -400,7 +509,28 @@ def load_baseline(
     if factory is None:
         return None
 
+    # ``baselines/`` settled on a single ``RetrievalStack`` rather than the
+    # loose channels this seam originally offered, so bridge the two here:
+    # the harness already holds every field the stack needs, and rebuilding it
+    # would re-read a 100 MB FAISS index that Pipeline loaded once on purpose.
+    stack: Any = None
+    if pipeline.corpus is not None and pipeline.hybrid is not None:
+        try:
+            from ..baselines.base import RetrievalStack
+
+            stack = RetrievalStack(
+                corpus=pipeline.corpus,
+                hybrid=pipeline.hybrid,
+                reranker=pipeline.reranker,
+                top_k=int(cfg.get("retrieval.top_k", 10)),
+                candidate_k=int(cfg.get("retrieval.rerank.top_n", 50)),
+                dataset=dataset,
+            )
+        except Exception:  # noqa: BLE001 - baselines absent; the seam still works
+            stack = None
+
     kwargs: dict[str, Any] = {
+        "stack": stack,
         "cfg": cfg,
         "config": cfg,
         "dataset": dataset,
@@ -413,13 +543,39 @@ def load_baseline(
         "reranker": pipeline.reranker,
         "client": client,
     }
+    built: Any = None
+
+    # A BaselineBase subclass has a known, narrow signature -- ``(stack, *,
+    # cfg=...)``. Go through it directly rather than through the generic
+    # keyword guess below: several of these declare ``**kwargs`` and forward to
+    # ``super()``, which defeats signature filtering and lets an unexpected
+    # keyword through to a constructor that rejects it. That failure then looks
+    # identical to "the module is missing", because both return None here.
     try:
-        return factory(**_acceptable_kwargs(factory, kwargs))
-    except Exception:  # noqa: BLE001
+        from ..baselines.base import BaselineBase
+
+        if inspect.isclass(factory) and issubclass(factory, BaselineBase):
+            if stack is None:
+                return None
+            built = factory(stack, cfg=cfg)
+    except ImportError:
+        pass
+
+    if built is None:
         try:
-            return factory(cfg)
+            built = factory(**_acceptable_kwargs(factory, kwargs))
         except Exception:  # noqa: BLE001
-            return None
+            try:
+                built = factory(cfg)
+            except Exception:  # noqa: BLE001
+                return None
+    if built is None:
+        return None
+    # A BaselineBase speaks the baselines call shape; wrap it. Anything already
+    # orchestrator-shaped (a stub in the tests, say) is passed through.
+    if hasattr(built, "run") and not hasattr(built, "transitions"):
+        return _BaselineAdapter(built, dataset=dataset, config_name=config_name)
+    return built
 
 
 def _acceptable_kwargs(fn: Any, kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -946,15 +1102,30 @@ def gold_doc_ids(gold: GoldAnswer | Mapping[str, Any], dataset: str) -> list[str
 def predicted_supporting_facts(record: Mapping[str, Any]) -> list[tuple[str, int]]:
     """The ``(title, sent_id)`` pairs the system stands behind.
 
-    Cited evidence when there are citations, the whole evidence pool otherwise.
-    The fallback is what keeps the comparison against a retrieval-only baseline
-    meaningful -- a baseline that never emits citations would otherwise score a
-    structural zero on sp_em and sp_f1 -- and reporting sp_precision beside
-    sp_f1 is what keeps the fallback honest, since an uncited pool of twenty
-    sentences pays for its recall in precision.
+    Cited evidence when the citations identify evidence, the whole evidence pool
+    otherwise. The fallback is what keeps the comparison against a retrieval-only
+    baseline meaningful -- a baseline that never emits citations would otherwise
+    score a structural zero on sp_em and sp_f1 -- and reporting sp_precision
+    beside sp_f1 is what keeps the fallback honest, since an uncited pool of
+    twenty sentences pays for its recall in precision.
+
+    The fallback triggers on citations that *resolve to no evidence*, not merely
+    on their absence, and the distinction is not academic: it is the difference
+    between measuring a system and measuring this harness. ``_BaselineAdapter``
+    keys evidence ``e1..en`` while a generative baseline cites the passage
+    labels its prompt used (``p1``, ``p2``), so the two namespaces never
+    intersect. Under an ``if cited`` guard those citations are non-empty and
+    unresolvable at once: the pool filter empties, the fallback is skipped
+    because citations *exist*, and sp_em and sp_f1 come out as exact zeros that
+    look like a finding. They are not one -- ``naive_rag`` and ``self_ask`` emit
+    supporting facts on every question -- and a zero produced this way is
+    indistinguishable in the tables from a system that genuinely grounds
+    nothing. Resolving against the evidence ids that are actually present costs
+    one set intersection and removes a whole class of silent, publishable error.
     """
     evidence = record.get("evidence") or []
-    cited = set(record.get("citations") or ())
+    known = {e.get("evidence_id") for e in evidence}
+    cited = set(record.get("citations") or ()) & known
     pool = [e for e in evidence if e.get("evidence_id") in cited] if cited else list(evidence)
     facts: list[tuple[str, int]] = []
     for item in pool:

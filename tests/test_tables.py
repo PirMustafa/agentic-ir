@@ -289,6 +289,12 @@ def synthetic_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     golds = [_gold(i, TITLES[0]) for i in range(6)]
     monkeypatch.setattr(tables, "load_golds", lambda dataset, *, cfg: {g.qid: g for g in golds})
+    # The evaluation slice for this fixture is these six questions, not the 250
+    # of config.yaml. Without this the generator would -- correctly -- treat both
+    # runs as incomplete and withhold every delta and significance mark, and the
+    # assertions below would be testing the under-power rule rather than the
+    # significance marking they are about.
+    monkeypatch.setattr(tables, "eval_sample_size", lambda dataset, *, cfg: len(golds))
 
     root = tmp_path / "runs"
     for config_name, answer in (("agentic_full", TITLES[0]), ("hybrid_rerank", "Something Else")):
