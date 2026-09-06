@@ -167,7 +167,11 @@ zero model calls, entity linking is alias matching, graph traversal is
 bidirectional breadth-first search, and the confidence blend is arithmetic. The
 worst case for a full agentic question is 15 model calls against a hard cap of
 20, and the typical cost is four to seven. A system that cannot afford to think
-everywhere is forced to be explicit about where thinking pays.
+everywhere is forced to be explicit about where thinking pays --- and, as
+Chapter~\ref{ch:implementation} reports, the division of labour it settles on
+is not always the one that was designed: in the headline run the Planner
+attached a tool hint to every sub-query, so the first rule of the routing table
+decided every routing and the other six were never reached.
 
 \section{Objectives and Contributions}
 
@@ -199,15 +203,75 @@ from an aggregate.
 retrieval quality are reported alongside agent-specific cost --- model calls per
 question, calls avoided by deterministic rules, tool invocations, plan depth,
 re-plan rate, and latency --- so that no accuracy gain is presented without the
-compute it consumed. Nine configurations, spanning lexical, dense, hybrid,
-naive-RAG and self-ask baselines as well as the agentic system and its
-ablations, are run across two multi-hop benchmarks.
+compute it consumed. The evaluation grid comprises nine configurations ---
+lexical, dense, hybrid, naive-RAG and self-ask baselines, the agentic system
+and its three ablations --- over two multi-hop benchmarks. At the time of
+writing all nine have been run on HotpotQA, one of them still on a partial
+slice, and six on 2WikiMultihopQA; Chapter~\ref{ch:implementation} states
+precisely which rows are complete, and no conclusion is drawn from a partial
+one.
 
 \textbf{Fourth, a fully local and reproducible implementation.} Every model runs
 on-device, prompts are versioned files whose rendered SHA-1 is logged with each
 call, every sort carries an explicit tiebreaker, and a test asserts that no
 module imports a network client other than the local Ollama endpoint. The
 system can be re-run by a reader with a consumer GPU and no budget.
+
+Table~\ref{tab:task-mapping} records where each of the brief's five tasks is
+implemented and where this report treats it, so that the coverage claim above
+can be checked line by line rather than taken from the prose. One clause of the
+brief is deliberately not met. Its description of the implementation chapter
+mentions ``orchestration of external APIs for real-time data enrichment'', and
+its Table~1 gives web search APIs as an example of a tool. This system exposes
+no external API at all: every tool in the registry is a local index or the
+local entity graph, and the network test above forbids anything else. The
+deviation is a design decision rather than an omission. A tool whose output
+changes between runs makes the evaluation unrepeatable and the trace
+unfalsifiable, and the constraint of running with no paid service is one the
+report treats as a feature of the study. The tool registry is written so that
+a real-time connector could be added as one more entry, and
+Section~\ref{sec:thesis} returns to that extension.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{The five tasks of the assignment brief's Table~1, the component
+  that implements each, and where the report specifies and measures it. Five
+  tasks are covered by four agents because query refinement and retrieval
+  planning are the same act performed at two points in the loop: once before
+  any evidence exists and again after the Verifier has said what is missing.}
+  \label{tab:task-mapping}
+  \begin{tabular}{p{4.2cm}p{4.6cm}p{5.6cm}}
+    \toprule
+    Task (brief, Table~1) & Agent or component & Specified in; measured in \\
+    \midrule
+    Autonomous query refinement &
+      Planner: per-node query rewrites; re-plan on a \texttt{ReplanDirective} &
+      \S\ref{sec:decomposition}, \S\ref{sec:verification};
+      re-plan rate in Table~\ref{tab:agent-metrics-hotpotqa} \\
+    Multi-step retrieval planning &
+      Planner: validated sub-query DAG with placeholders; orchestrator state
+      machine &
+      \S\ref{sec:decomposition}, \S\ref{sec:architecture};
+      \S\ref{sec:ablations} (\texttt{agentic\_no\_planner}) \\
+    Tool-augmented retrieval &
+      Retrieval Agent: tool registry, routing table, conditional reranking &
+      \S\ref{sec:tools}; tool calls and calls saved in
+      Table~\ref{tab:agent-metrics-hotpotqa} \\
+    Knowledge graph traversal &
+      KG Navigator: alias linking, bidirectional BFS over the induced entity
+      graph &
+      \S\ref{sec:kg-traversal}, \S\ref{sec:preprocessing};
+      \S\ref{sec:ablations} (\texttt{agentic\_no\_kg}) \\
+    Self-reflective validation and fact checking &
+      Verifier: NLI entailment, citation grounding, confidence blend, feedback
+      edge &
+      \S\ref{sec:verification}; \S\ref{sec:ablations}
+      (\texttt{agentic\_no\_verifier}), \S\ref{sec:errors},
+      Table~\ref{tab:calibration} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 A fifth outcome is not a designed contribution but is reported because it is
 useful. Schema-constrained planning with an 8B model proved more reliable than

@@ -255,13 +255,17 @@ loss is introduced at the index level. The 2Wiki build took 4.1\,s for BM25 and
 Evaluation is run on a frozen 250-question sample per dataset rather than on
 the full split, and the reason is arithmetic. Local generation runs at a
 measured 52 tokens per second warm on an RTX 5060 with 8\,GB of VRAM, giving a
-mean schema-constrained planner call of about 3.75\,s and a mean agentic
-question cost of roughly 22--25\,s once retrieval, reranking and entailment are
-included. One agentic configuration over HotpotQA's full 7{,}405-question
-validation split is on the order of 45 hours, and the evaluation grid comprises
-nine configurations across two datasets. At 250 questions the same grid is
-approximately 12--16 hours, which is feasible on this hardware; at 7{,}405 it
-is not.
+derived rather than measured planner call of about 3.75\,s. The pre-run
+estimate on which the sampling decision was taken put a full agentic question
+at roughly 22--25\,s once retrieval, reranking and entailment were included;
+the medians actually measured, reported in
+Table~\ref{tab:agent-metrics-hotpotqa} and Table~\ref{tab:agent-metrics-twowiki},
+came out higher, and the estimate is recorded here as the estimate it was
+rather than revised to match. On that estimate one agentic configuration over
+HotpotQA's full 7{,}405-question validation split is on the order of 45 hours,
+and the evaluation grid comprises nine configurations across two datasets. At
+250 questions the same grid was estimated at 12--16 hours, which is feasible
+on this hardware; at 7{,}405 it is not.
 
 The sample is drawn once, by \texttt{scripts/sample\_eval\_set.py} with
 seed~42, materialised to
@@ -292,17 +296,25 @@ bootstrap is taken over per-question \emph{differences} (1{,}000 resamples,
 systems sharing a corpus, an index and a question set makes those intervals
 materially tighter than the unpaired figure suggests; the realised widths are
 reported with the results rather than assumed here. The three component
-ablations run on a fixed 150-question subsample of the same 250 to keep the
-grid inside its time budget, and the results table says so in its caption.
+ablations run on the same 250 questions as every other configuration, not on
+a subsample, so that every ablation delta is a paired comparison over an
+identical question set; where an ablation run had not yet covered all 250
+questions the generated table marks the row as preliminary and withholds its
+delta rather than pairing a prefix against the full slice.
 
 Each dataset also gets a 50-question calibration slice,
 \texttt{\{dataset\}\_calib\_50.jsonl}, written beside the evaluation file in
 \texttt{data/processed/} and verified to have zero question-identifier overlap
-with the evaluation 250. Its sole purpose is to fix
-the Verifier's \texttt{confidence\_threshold} --- currently 0.55 --- before the
-evaluation run begins. That threshold controls the re-plan rate, which is
+with the evaluation 250. Its intended purpose was to fix
+the Verifier's \texttt{confidence\_threshold} --- 0.55 --- before the
+evaluation run began. That threshold controls the re-plan rate, which is
 itself one of the headline agent-specific measures, so sweeping it on the
 evaluation set would be tuning on the test set and would invalidate the very
-metric it was tuned to improve.
+metric it was tuned to improve. In the event the sweep was run over this slice
+only after the evaluation, on confidences produced at the configured value,
+and Chapter~\ref{ch:conclusions} reports what such a post-hoc sweep can and
+cannot establish; the slice's disjointness is what keeps even that diagnostic
+reading free of the evaluation questions. Table~\ref{tab:dataset-corpus}
+summarises the two corpora as built.
 
 \input{../results/tables/dataset_stats.tex}

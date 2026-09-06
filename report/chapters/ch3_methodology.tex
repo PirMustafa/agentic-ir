@@ -131,7 +131,8 @@ The first hop is easy, and easy in a way that flatters BM25 specifically:
 ``Babycham'' is a near-unique term in a 66{,}581-passage corpus, so lexical
 matching on that term alone puts the correct passage at rank one. This is
 precisely the situation routing rule R4 of Section~\ref{sec:tools} exists to
-detect.
+detect --- though, as that section records, in the evaluated runs the
+Planner's own tool hint settled every routing before R4 could be consulted.
 
 The second hop is not merely harder. Compare the query terms ---
 \emph{country}, \emph{firm}, \emph{owns}, \emph{Babycham}, \emph{located} ---
@@ -250,10 +251,16 @@ three-node comparison plan.
 
 The Planner degrades along a deterministic ladder rather than failing: a
 comparison template, then a two-node bridge template, then an identity plan
-routed to hybrid search with reranking. That floor is by construction precisely
-the \texttt{hybrid\_rerank} baseline, so the agentic system can never score
-below its strongest non-agentic competitor for reasons of infrastructure
-failure --- only for reasons of judgement.
+routed to hybrid search with reranking. It is tempting to describe that floor
+as the \texttt{hybrid\_rerank} baseline, and an earlier draft of this report
+did; the description is wrong, and the ablation grid of
+Chapter~\ref{ch:implementation} is what shows it to be wrong. An identity plan
+still passes through synthesis and verification, so the system with the
+Planner removed is a one-node agentic system that answers, cites, and can
+still re-plan --- not a ranker. What the ladder guarantees is narrower and
+still worth having: retrieval itself can never be worse than a single hybrid
+query with reranking, so a retrieval deficit against that baseline is a
+judgement about what the Planner chose to ask, never an infrastructure failure.
 
 \subsection{Tool-Augmented Retrieval}
 \label{sec:tools}
@@ -283,6 +290,23 @@ hybrid, since a bridge-filled query mixes one precise entity with paraphrased
 relation text and neither channel alone suffices; and a default row (R7) makes
 the table total.
 
+One fact about the table has to be stated before its cost is argued for,
+because it changes what the argument is about. Rule R1 honours a tool hint the
+Planner may attach to a sub-query, and the decision-table is evaluated first
+match wins. In the headline HotpotQA run the Planner attached a hint to every
+one of the 854 sub-queries it emitted, so R1 fired on all 575 routing
+decisions the trace records and rules R2--R7 never executed once. All seven
+rules are implemented and unit-tested; on this data six of them are dead code.
+That is not a defect in the rules but a finding about the division of labour
+between the two agents: the schema-constrained planning call, which the system
+pays for anyway, already carries a per-node tool choice, and the lexical
+features the remaining rules consult were never needed to decide anything. The
+cost argument below therefore describes a one-rule router in practice, and the
+saving it claims is the saving of not asking the model a second time for a
+decision it made in its first call. Whether the model's hints agree with what
+the lexical rules would have chosen is a measurable question and is recorded
+as an open one in Chapter~\ref{ch:implementation}.
+
 The table costs zero model calls, and that deserves stating as an argument
 rather than as an optimisation. An agent that spends a language-model call on a
 decision a rule already settles is spending the user's latency budget, not
@@ -295,12 +319,23 @@ identically. Autonomy is a property of which decisions a system makes without a
 human, not of which decisions it routes through a transformer.
 
 \begin{sloppypar}
-The claim is nonetheless empirical and is treated as such. Clearing the
-retriever's \texttt{heuristic\_shortcut} flag routes every sub-query through
-the selection prompt instead; running that configuration on the disjoint
-50-question calibration slice yields the rule--model agreement rate, the change
-in nDCG@10 and the change in wall clock, and reporting those three numbers is
-what converts the paragraph above from an assertion into a result.
+The claim is nonetheless empirical, and the experiment that would test it was
+designed but has not been run. The design was to clear the retriever's
+\texttt{heuristic\_shortcut} flag, which routes every sub-query through a
+tool-selection prompt instead of the table, run that configuration on the
+disjoint 50-question calibration slice, and report the rule--model agreement
+rate, the change in nDCG@10 and the change in wall clock. No such run exists
+under \texttt{results/}, so no agreement rate is reported anywhere in this
+document. There is also a reason the experiment cannot be run as the code
+stands: the retriever consults the planner hint before it consults the flag,
+so a sub-query carrying a hint is routed by R1 whether or not the shortcut is
+enabled, and with a hint on every sub-query the selection prompt is
+unreachable. Making the model router reachable requires suppressing the
+Planner's hints as well, which is a different experiment from the one designed
+and one that would test the lexical rules R2--R7 rather than the router the
+system actually used. The paragraph above is therefore a design argument, not
+a measured result, and Chapter~\ref{ch:implementation} says so again where the
+cost figures are reported.
 \end{sloppypar}
 
 This is also where reinforcement learning would enter, and why it does not
@@ -399,10 +434,14 @@ first attempt; and the error taxonomy of Chapter~\ref{ch:implementation}
 contains explicit \texttt{verifier\_false\_accept} and
 \texttt{verifier\_false\_reject} categories, computed post hoc against gold
 supporting facts, so the loop is falsifiable rather than merely asserted. The
-threshold itself is swept on the disjoint calibration slice of
-Section~\ref{sec:sampling} and frozen before the evaluation run, because it
-controls the re-plan rate and tuning it on the evaluation set would corrupt one
-of the headline agent metrics.
+threshold of 0.55 was set a priori. The design called for it to be swept on
+the disjoint calibration slice of Section~\ref{sec:sampling} and frozen before
+the evaluation run, because it controls the re-plan rate and tuning it on the
+evaluation set would corrupt one of the headline agent metrics; what was
+actually done is a post-hoc sweep over that slice, reading confidences that a
+single run at 0.55 had already produced, and Chapter~\ref{ch:conclusions}
+reports both what that sweep found and why it is not the experiment the
+design specified.
 
 \section{The Role of the Language Model}
 \label{sec:llm-role}
@@ -505,6 +544,8 @@ Mapped onto the assignment brief's Table~1, the Planner covers autonomous query
 refinement and multi-step retrieval planning, the tool registry and routing
 table cover tool-augmented retrieval, the KG Navigator covers knowledge graph
 traversal, and the Verifier covers self-reflective validation and fact
-checking. Five tasks are addressed by four agents because refinement and
-planning are the same act performed at different points in the loop: once
-before evidence exists, and again after the Verifier has said what is missing.
+checking; Table~\ref{tab:task-mapping} in Chapter~\ref{ch:introduction} gives
+the mapping row by row with the sections that specify and measure each. Five
+tasks are addressed by four agents because refinement and planning are the
+same act performed at different points in the loop: once before evidence
+exists, and again after the Verifier has said what is missing.

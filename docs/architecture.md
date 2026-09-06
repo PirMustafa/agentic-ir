@@ -375,6 +375,22 @@ class QuestionState:
     def banned_texts(self) -> tuple[str, ...]: ...
 ```
 
+**Known defect (observed in the HotpotQA `agentic_full` run, not fixed).** `results`,
+`kg_results`, `answers` and `bridge_entities` are keyed by `subquery_id`, and every plan
+revision numbers its nodes from `q1`. A re-plan's `q1` therefore **overwrites** cycle 0's
+`q1`, while any id the new plan does not reuse **survives stale** from the earlier cycle.
+In `agentic_full_hotpotqa_20260904T221533Z`, 118 of 250 questions re-planned; 115 of
+those lost their cycle-0 retrieval results and 92 carry at least one stale id. Two
+consequences: (i) the retrieval metrics for re-planned questions are computed over a
+last-cycle-plus-stale pool, not over everything the question retrieved; (ii) the trace
+is **not** the complete audit record §1.3 promises — `plans` is immutable and complete,
+but the per-sub-query state the plans produced is not, so cycle 0 of a re-planned
+question cannot be reconstructed. **Fix:** namespace the four maps by cycle
+(`dict[tuple[int, str], ...]`, or one `CycleState` per revision appended to a list) and
+have `AGGREGATE` pool over all cycles while `EXECUTE` resolves placeholders against the
+current one only. The fix changes what `AGGREGATE` sees and therefore the numbers; it
+belongs to a re-run, not to a table regeneration. Reported in the Chapter 5 limitations.
+
 `gold` is carried on the state but **no agent may read it**. Enforce with a test that greps `agents/` for `state.gold`. Cheap insurance against accidental leakage that would invalidate every number in the report.
 
 ---

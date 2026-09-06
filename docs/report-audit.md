@@ -9,9 +9,11 @@ recomputed from `results/runs/*/traces.jsonl` where a claim asserts something th
 aggregate cannot show. The mechanised subset of these checks lives in
 `tests/test_report_integrity.py`.
 
-**Status.** Written after the `tables.py` corrections listed in section 9. Several
-findings below exist *because* of those corrections: the tables now say something
-different from the prose that was written against the old ones.
+**Status.** Sections 1-9 were written after the first `tables.py` corrections (section 9)
+and describe the prose as it stood *before* the chapters were rewritten against them.
+Section 10 is the second pass: it records what the rewrite changed, the findings the
+first pass missed, and the run inventory as of that pass. Where sections 1-8 say a
+sentence "must be rewritten", section 10 says whether it was.
 
 **A moving target.** The evaluation sweep is running. Row counts, and therefore some
 numbers here, change while it advances. Everything below carries the run id it was read
@@ -425,3 +427,157 @@ preliminary marking on the source line naming the run rather than anywhere in th
 
 **Not fixed here, because the code is not owned by this pass:** B1 lives in `run_eval.py`;
 B3's wall-clock guard lives in the orchestrator.
+
+
+---
+
+## 10. Second pass: the rewrite, and what the first pass missed
+
+Written 2026-09-06 after `report/main.tex` and every chapter were revised against the
+regenerated tables. Everything in sections 1-8 that named a stale sentence has been
+acted on; the disposition of each is listed first, then the findings the first pass did
+not catch, then the run inventory.
+
+### 10.1 Disposition of sections 1-8
+
+| finding | disposition |
+|---|---|
+| B1 "generative baselines emit no supporting facts" | **Rewritten** in `main.tex` (abstract), `ch4` results and discussion, `ch5` findings. The prose now says it was a harness defect, quotes the starred pool-scored figures, states that the agentic (cited-subset) and baseline (whole-pool) protocols trade precision against recall in opposite directions and that one SP-F1 does not rank them, and keeps only citation grounding (0.960/0.976 vs 0.000) as categorical. |
+| B2 bootstrap against a non-answering reference | **Rewritten** in `ch4` and `ch5`. Reference is `self_ask`; the paired dF1 -0.093 [-0.145, -0.039] (HotpotQA, significant) and -0.043 [-0.100, +0.014] (2Wiki, not) are quoted; the "cannot be called significant" sentence is inverted for HotpotQA. |
+| B3 latency mean | **Rewritten** in `ch4` and `ch5` on medians (28.3 / 35.4 s vs 4.5 / 13.2 s `self_ask`, 4.9 / 8.3 s `hybrid_rerank`), the 65,744.3 s maximum and its qid quoted, the cooperative guard stated as a system defect in `ch4` results and `ch5` limitations. |
+| B4 150-question ablation subsample | **Deleted** from `ch2`; replaced by the statement that ablations run on the same 250 and that short rows are marked preliminary. |
+| section 2 stale latency literals | all replaced; `295.1`, `41.6`, `17.1`, `7.4` no longer appear. |
+| section 2.1 calibration fragment never input | **Fixed**: `ch4` gains a `Verifier Threshold Calibration` section that inputs `calibration.tex` and names the run `agentic_full_hotpotqa_20260904T184256Z`; `ch5` refs `tab:calibration` and `tab:calibration-reliability` and names the run. |
+| section 3 "wide margin" over `naive_rag` | softened to a point-estimate ordering with the note that no paired interval exists. |
+| section 3 `synthesis_error` "roughly double" | corrected to "more than three times" with the `self_ask` rates (0.064 / 0.076) quoted. |
+| section 4 stale ablation prose | **Rewritten**; see 10.2 (a). |
+| section 8 unreferenced tables | every generated table is now referenced from the prose that discusses it (`tab:main-*` x4, `tab:agent-metrics-*` x2, `tab:ablations-*` x2, `tab:error-analysis-*` x2, `tab:dataset-corpus`, `tab:calibration*` x2). |
+| section 8 "47%" | now 47.2% everywhere. |
+
+### 10.2 Findings the first pass missed
+
+**(a) The central ablation is answered and the report said it was not.**
+`agentic_no_verifier` on HotpotQA is complete at n=250: EM 0.396 / F1 0.474 against
+0.432 / 0.510, dF1 -0.037 [-0.065, -0.011], p = 0.008, at 2.06 LLM calls and 16.5 s
+median against 4.26 and 28.3 s. `agentic_no_planner` is also complete at n=250 and
+lands *above* the full system (EM 0.456 / F1 0.543, dF1 +0.033 [-0.017, +0.086],
+p = 0.186, not significant) at 1.35 calls and 9.7 s. Both are now written into `ch4`
+(Ablation Study) and `ch5` (Empirical Findings) with their sample sizes. One
+`% PLACEHOLDER` remains, in `ch4`, for `agentic_no_kg` (HotpotQA, n=162 at the time of
+writing) and all three ablations on 2WikiMultihopQA (not started).
+
+**(b) "Removing the planner reduces the system to `hybrid_rerank` by construction" was
+false.** Stated in `ch3:251-256`, `ch4:381-384`, `ch4:411-414`, `ch5:52-55`. The
+agent-metrics table contradicts it: `agentic_no_planner` makes 1.35 LLM calls, re-plans
+on 18.8% of questions and grounds citations at 0.936; `hybrid_rerank` makes 0 calls and
+no answer. The ablations caption itself says the floor requires removing planning,
+synthesis *and* verification. Corrected in all four places; `ch3` and `ch5` say the
+earlier draft made the claim and withdraw it.
+
+**(c) `ch5:213-217` mislabelled the F1 interval as an EM interval and argued from the
+overlap of marginal intervals**, the wrong test for paired data. Corrected: the paired
+interval is quoted and the overlap argument is described as the mistake it was.
+
+**(d) `ch3:402-405` said the threshold was "swept on the calibration slice and frozen
+before the evaluation run".** `ch5:251-257` and `calibration.tex` say the sweep was
+post hoc, over confidences produced at 0.55. `ch3` now agrees with `ch5`; `ch2` now
+says the slice's pre-run purpose was "intended" and points to `ch5`.
+
+**(e) The rule-vs-LLM routing agreement experiment (`ch3:298-304`) was written in the
+present tense with three numbers.** It was never run, and cannot be run as coded:
+`RetrievalAgent._select` returns on `selector == "planner_hint"` *before* it consults
+`heuristic_shortcut`, so with a hint on every sub-query the selection prompt is
+unreachable. Rewritten as unrun and unrunnable; the `ch5` placeholder is deleted.
+
+**(f) The seven-rule router was a one-rule router on this data.** In
+`agentic_full_hotpotqa_20260904T221533Z` the Planner attached a `tool_hint` to 854/854
+sub-queries; R1 fired on 575/575 routing decisions and R2-R7 never executed. Every
+place that narrated the seven rules as operating (`main.tex` abstract, `ch1:165`,
+`ch3:271-295`, `ch4:151`, `ch4:534-543`, `ch5:13`) now carries the qualification, and
+`ch3`/`ch4` write it as a finding about the planner/router division of labour.
+These counts are trace-derived and appear in no generated table; `ch3` attributes them
+to the run.
+
+**(g) The LLM response cache does not exist.** `config/config.yaml` declares
+`llm.cache`, but no sqlite code exists anywhere, `cache_hit=False` is hard-coded in
+`agents/base.py:444`, `llm_cache_hits` is always 0 and `meta.json` reports
+`cache_cold: true` only because no file exists. `ch4:109-114` ("the harness records
+whether the response cache was cold") and `ch4:168` ("cache state") are rewritten to
+say no cache is implemented and every latency is uncached by absence, not by
+configuration. The agent-metrics captions ("cache hits included", "only comparable
+between cold-cache runs") are owned by `tables.py`.
+
+**(h) `llm_calls_saved` was inflated.** Of the 1,774 credited saves in the HotpotQA
+`agentic_full` run, 635 were KG entity-linking calls this configuration never makes,
+and 347 extraction-ladder saves were uncounted; the regenerated `agent_metrics.tex` prints 2.60 (HotpotQA) and 3.10 (2Wiki) per
+question rather than 7.10 / 7.19, with the per-rule decomposition in its caption. `ch4:348-356`, `ch5:156-163` and the abstract's "displaced
+more model calls than the system spent" are rewritten to the corrected definition and
+the sentence is withdrawn. `ch4` and `ch5` quote the new figures from the regenerated table.
+
+**(i) The Verifier entails `answer_sentence`, never `answer`.** `verifier.py:318`:
+`hypothesis = cand.answer_sentence.strip() or cand.answer.strip()`. Demonstration in
+the trace: qid `5a7af32e55429931da12c99c` answered "New York City" (gold: Brooklyn,
+New York) with an answer sentence copied from unrelated evidence; nli_support 0.995,
+citation_grounding 1.0, retrieval_agreement 0.0, accepted at confidence 0.82. Written
+into `ch4` error analysis and `ch5` limitations with the qid. The component scores are
+trace-derived and in no table.
+
+**(j) Re-planning overwrites cycle-0 state.** Sub-query ids restart at `q1` per
+revision and `QuestionState.results/kg_results/answers/bridge_entities` are keyed by id.
+Of 118 re-planned HotpotQA questions, 115 lost cycle-0 retrieval and 92 carry stale
+ids. Consequences: retrieval metrics for the 47.2% of questions that re-planned are over
+a last-cycle-plus-stale pool, and the trace is not the complete audit record
+`architecture.md` section 1.3 promises. Added to `ch4` results (retrieval paragraph),
+`ch5` limitations, and `docs/architecture.md` section 1.10 as a known defect with the
+fix (namespace state by cycle). Counts are trace-derived.
+
+**(k) The wall-clock budget is cooperative.** `Budget.wallclock_exceeded()` is checked
+at `orchestrator.py:241` (between DAG nodes) and `:561` (re-plan guard G4); no call can
+be pre-empted, and the NLI / reranker paths have no timeout. Stated in `ch4` results
+and as a `ch5` limitation.
+
+**(l) `ch1:202-204` "nine configurations are run"** -- nine on HotpotQA (one partial),
+six on 2Wiki. Rephrased to stay true and to defer to `ch4` for the exact status.
+
+**(m) `ch2:258-259` "22-25 s" per agentic question** was a pre-run estimate; the
+measured medians are 28.3 / 35.4 s. Now labelled as the estimate it was.
+
+**(n) `ch1` section 1.4 had no mapping table for the brief's Table 1.** Added
+`tab:task-mapping` (task, agent/component, section and table) and one paragraph
+acknowledging the brief's "external APIs for real-time enrichment" clause and stating
+the deliberate fully-local deviation. `ch3` (Architectural Summary) points at it.
+
+**(o) `report/README.md` still called every chapter a skeleton**, and `report/main.pdf`
+in the tree was built from the pre-rewrite chapters. README fixed; PDF rebuilt at the
+end of this pass.
+
+### 10.3 Numbers in the prose that no generated table contains (second pass)
+
+All corpus/index/KG/hardware figures are as in section 2. Trace-derived figures that
+the chapters now quote, each attributed to its run in the text:
+
+| location | value | source |
+|---|---|---|
+| `ch3` Tool-Augmented Retrieval | 854 sub-queries with a hint; R1 fired 575/575 | `agentic_full_hotpotqa_20260904T221533Z/traces.jsonl` |
+| `ch4` Error Analysis, `ch5` Limitations | qid `5a7af32e55429931da12c99c`; NLI 0.995, grounding 1.0, retrieval agreement 0.0, confidence 0.82; "New York City" vs "Brooklyn, New York" | same run |
+| `ch5` Limitations, `architecture.md` 1.10 | 118 re-planned, 115 lost cycle-0 results, 92 stale ids | same run |
+| `ch4` Results | "roughly 220 times its budget" | 65,744.3 s / 300 s, both in `agent_metrics.tex` |
+| `ch5` Limitations | ECE 0.332, MCE 0.636, base rate 0.340, Brier 0.339, skill -0.510, AUC 0.633, J-optimal 0.54, CI [0.45, 0.64], width 0.19 | now backed by `calibration.tex`, which `ch4` inputs |
+
+### 10.4 Run inventory (second pass)
+
+| configuration | HotpotQA | 2WikiMultihopQA |
+|---|---|---|
+| `bm25_only` | 250 (`20260902T113736Z`) | 250 (`20260902T113905Z`) |
+| `dense_only` | 250 (`20260902T113746Z`) | 250 (`20260902T113913Z`) |
+| `hybrid_rerank` | 250 (`20260902T114415Z`) | 250 (`20260904T184235Z`) |
+| `naive_rag` | 250 (`20260902T120313Z`) | 250 (`20260904T201400Z`) |
+| `self_ask` | 250 (`20260904T194457Z`) | 250 (`20260904T210355Z`) |
+| `agentic_full` | 250 (`20260904T221533Z`) | 250 (`20260905T184526Z`) |
+| `agentic_no_verifier` | **250** (`20260905T213927Z`) | not started |
+| `agentic_no_planner` | **250** (`20260905T224906Z`) | not started |
+| `agentic_no_kg` | in flight: `agentic_no_kg_hotpotqa_20260905T232702Z`, 162 rows when the tables were regenerated at 02:06, 184 at 02:11, still rising; every table marks the row preliminary and it drifts from `traces.jsonl` between regenerations | not started |
+| `agentic_full` calibration slice | 50 (`20260904T184256Z`), feeds `calibration.tex` only | -- |
+
+Sentences that depend on the rows still open are all in `ch4` (Ablation Study, the one
+`% PLACEHOLDER`) and `ch5` (Empirical Findings, Limitations), and each says so.
