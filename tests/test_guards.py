@@ -129,6 +129,16 @@ def test_every_open_specifies_utf8():
             path_open = isinstance(fn, ast.Attribute) and fn.attr == "open"
             if not (builtin_open or path_open):
                 continue
+            # ``x.open()`` is assumed to be ``Path.open`` because that is what
+            # it is everywhere in this project. Some stdlib modules spell an
+            # unrelated verb the same way -- ``webbrowser.open(url)`` opens a
+            # browser, not a file, and has no encoding to specify. They are
+            # listed rather than pattern-matched so that adding one is a
+            # decision somebody made, not a hole that widened on its own.
+            if path_open and isinstance(fn.value, ast.Name) and fn.value.id in {
+                "webbrowser",
+            }:
+                continue
             kwargs = {k.arg for k in node.keywords}
             # Mode is the FIRST positional arg on Path.open(mode) but the
             # SECOND on the builtin open(path, mode). Checking only the latter
