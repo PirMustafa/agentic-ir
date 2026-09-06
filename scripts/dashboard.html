@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic IR — dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%E2%86%BA%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161920;
+    --panel-2: #1c2029;
+    --line: #272c37;
+    --ink: #e6e9ef;
+    --dim: #8b93a5;
+    --dimmer: #5d6577;
+    --accent: #6ea8fe;
+    --good: #63c98a;
+    --bad: #e0736d;
+    --warn: #d9a441;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 20;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); }
+  nav { margin-left: auto; display: flex; gap: 2px; }
+  nav button {
+    background: none; border: 1px solid transparent; color: var(--dim);
+    padding: 6px 13px; border-radius: 6px; cursor: pointer;
+    font: 500 13px var(--sans);
+  }
+  nav button:hover { color: var(--ink); background: var(--panel-2); }
+  nav button.on { color: var(--ink); background: var(--panel-2); border-color: var(--line); }
+
+  main { padding: 20px; max-width: 1500px; margin: 0 auto; }
+  section { display: none; }
+  section.on { display: block; }
+
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px;
+       color: var(--dim); font-weight: 600; margin: 26px 0 10px; }
+  h2:first-child { margin-top: 0; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px 16px; margin-bottom: 12px;
+  }
+  .muted { color: var(--dim); }
+  .dimmer { color: var(--dimmer); }
+  .mono { font-family: var(--mono); }
+  .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+
+  /* sweep */
+  .runrow {
+    display: grid; grid-template-columns: 210px 92px 1fr 108px; gap: 12px;
+    align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line);
+  }
+  .runrow:last-child { border-bottom: 0; }
+  .runrow .cfg { font-family: var(--mono); font-size: 13px; }
+  .runrow .ds { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+  .bar > i.done { background: var(--good); }
+  .bar > i.none { background: var(--dimmer); }
+  .runrow .n { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--dim); }
+
+  /* tables */
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--dim); font-weight: 600; font-size: 11.5px; text-transform: none; position: sticky; top: 0; background: var(--panel); }
+  tbody tr:hover { background: var(--panel-2); }
+  .scroll { overflow-x: auto; }
+
+  /* question list */
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  input[type=text], select {
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+    padding: 6px 10px; border-radius: 6px; font: 13px var(--sans);
+  }
+  input[type=text] { min-width: 240px; }
+  input[type=text]:focus, select:focus { outline: 1px solid var(--accent); }
+  .chip {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--dim);
+    border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 12.5px;
+  }
+  .chip.on { color: var(--ink); border-color: var(--accent); }
+  .qlist tr { cursor: pointer; }
+  .qlist td.q { white-space: normal; max-width: 520px; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--dim); }
+
+  /* detail */
+  .cycle { border-left: 2px solid var(--line); padding-left: 14px; margin: 12px 0; }
+  .cycle.sel { border-left-color: var(--good); }
+  .kv { display: grid; grid-template-columns: 190px 1fr; gap: 2px 14px; font-family: var(--mono); font-size: 12.5px; }
+  .kv dt { color: var(--dim); }
+  .kv dd { margin: 0; word-break: break-word; }
+  .ev { border-top: 1px solid var(--line); padding: 7px 0; font-size: 13px; }
+  .ev .meta { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .path { font-family: var(--mono); font-size: 11.5px; line-height: 2; }
+  .t { padding: 2px 6px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--line); }
+  .t.back { border-color: var(--good); color: var(--good); }
+  .t.rev { border-color: var(--warn); color: var(--warn); }
+  button.primary {
+    background: var(--accent); color: #0b1220; border: 0; padding: 8px 16px;
+    border-radius: 6px; font: 600 13px var(--sans); cursor: pointer;
+  }
+  button.primary:disabled { background: var(--dimmer); color: var(--panel); cursor: not-allowed; }
+  .note { border-left: 2px solid var(--warn); padding: 8px 12px; color: var(--dim); font-size: 13px; background: var(--panel-2); border-radius: 0 6px 6px 0; }
+  a { color: var(--accent); }
+  pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Agentic AI for Information Retrieval</h1>
+  <span class="sub" id="hdr">loading…</span>
+  <nav>
+    <button data-tab="sweep" class="on">Sweep</button>
+    <button data-tab="questions">Questions</button>
+    <button data-tab="results">Results</button>
+    <button data-tab="ask">Ask</button>
+  </nav>
+</header>
+
+<main>
+
+<section id="sweep" class="on">
+  <h2>Evaluation runs</h2>
+  <div class="card" id="sweepcard">reading results/runs/…</div>
+  <h2>Sweep process</h2>
+  <div class="card" id="proccard"></div>
+</section>
+
+<section id="questions">
+  <h2>Browse a run</h2>
+  <div class="card">
+    <div class="filters">
+      <select id="runsel"></select>
+      <input type="text" id="qsearch" placeholder="search question, answer, gold, qid">
+      <span class="chip" data-f="all">all</span>
+      <span class="chip" data-f="wrong">wrong</span>
+      <span class="chip" data-f="right">right</span>
+      <span class="chip" data-f="replanned">re-planned</span>
+      <span class="chip" data-f="recovered">recovered by re-plan</span>
+      <span class="chip" data-f="abstain">abstained</span>
+      <span class="muted" id="qcount"></span>
+    </div>
+    <div class="scroll" style="max-height:60vh;overflow-y:auto">
+      <table class="qlist"><thead id="qhead"></thead><tbody id="qbody"></tbody></table>
+    </div>
+  </div>
+  <div id="detail"></div>
+</section>
+
+<section id="results">
+  <h2>Generated tables</h2>
+  <div class="muted" style="margin-bottom:12px">
+    Read straight out of <span class="mono">results/tables/*.tex</span> — the same
+    files the report inputs. Regenerate with
+    <span class="mono">python -m agentic_ir.cli tables</span> and reload.
+  </div>
+  <div id="tables">loading…</div>
+</section>
+
+<section id="ask">
+  <h2>Ask the live system</h2>
+  <div id="askguard"></div>
+  <div class="card">
+    <div class="filters">
+      <input type="text" id="aq" placeholder="a multi-hop question" style="flex:1;min-width:340px">
+      <select id="ads"><option>hotpotqa</option><option>twowiki</option></select>
+      <select id="acfg">
+        <option>agentic_full</option><option>agentic_no_verifier</option>
+        <option>agentic_no_planner</option><option>agentic_no_kg</option>
+      </select>
+      <button class="primary" id="asend">Ask</button>
+    </div>
+    <div class="muted" id="astatus"></div>
+  </div>
+  <div id="adetail"></div>
+</section>
+
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x !== undefined) n.textContent = x; return n; };
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const num = (v, d = 3) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(d);
+
+let STATE = { runs: [], rows: [], run: null, filter: 'all', search: '', live: false };
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('main section').forEach(s => s.classList.toggle('on', s.id === b.dataset.tab));
+  if (b.dataset.tab === 'results') loadTables();
+});
+
+/* ---------------- sweep ---------------- */
+async function loadStatus() {
+  const d = await (await fetch('/api/status')).json();
+  STATE.live = d.live_enabled;
+  const done = d.runs.filter(r => r.complete).length;
+  $('#hdr').textContent = `${done}/${d.runs.length} configurations complete · D03000104`;
+
+  const card = $('#sweepcard'); card.innerHTML = '';
+  let ds = null;
+  for (const r of d.runs) {
+    if (r.dataset !== ds) { ds = r.dataset; card.appendChild(el('h2', null, ds)); }
+    const row = el('div', 'runrow');
+    row.appendChild(el('span', 'cfg', r.config));
+    const pct = Math.min(100, 100 * r.n / r.target);
+    row.appendChild(el('span', 'ds', r.complete ? 'complete' : (r.n ? pct.toFixed(0) + '%' : 'not started')));
+    const bar = el('div', 'bar'); const fill = el('i');
+    fill.style.width = pct + '%';
+    fill.className = r.complete ? 'done' : (r.n ? '' : 'none');
+    bar.appendChild(fill); row.appendChild(bar);
+    const age = r.age_s === null ? '' : (r.age_s < 120 ? ' · live' : '');
+    row.appendChild(el('span', 'n', `${r.n} / ${r.target}${age}`));
+    card.appendChild(row);
+  }
+
+  const p = $('#proccard');
+  if (!d.sweep_pid) {
+    p.innerHTML = '<span class="muted">No sweep pid was passed. Start with '
+      + '<span class="mono">--sweep-pid &lt;pid&gt;</span> to have this panel report whether it is alive.</span>';
+  } else {
+    p.innerHTML = `<span class="mono">pid ${d.sweep_pid}</span> — `
+      + (d.sweep_alive ? '<span class="good">running</span>' : '<span class="bad">not running</span>');
+  }
+  fillRunSelect(d.all_runs);
+}
+
+function fillRunSelect(all) {
+  const sel = $('#runsel');
+  if (sel.options.length && STATE.runs.length === all.length) return;
+  STATE.runs = all;
+  const usable = all.filter(r => r.n > 0).sort((a, b) => b.n - a.n || a.run_id.localeCompare(b.run_id));
+  sel.innerHTML = '';
+  for (const r of usable) {
+    const o = el('option', null, `${r.config} · ${r.dataset} · n=${r.n}`);
+    o.value = r.run_id; sel.appendChild(o);
+  }
+  if (usable.length && !STATE.run) { sel.value = usable[0].run_id; loadQuestions(); }
+}
+
+/* ---------------- questions ---------------- */
+$('#runsel').onchange = loadQuestions;
+$('#qsearch').oninput = e => { STATE.search = e.target.value.toLowerCase(); renderQuestions(); };
+document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
+  document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c));
+  STATE.filter = c.dataset.f; renderQuestions();
+});
+document.querySelector('.chip[data-f=all]').classList.add('on');
+
+async function loadQuestions() {
+  const run = $('#runsel').value;
+  if (!run) return;
+  STATE.run = run;
+  $('#qbody').innerHTML = '<tr><td class="muted">loading…</td></tr>';
+  const d = await (await fetch('/api/questions?run=' + encodeURIComponent(run))).json();
+  STATE.rows = d.rows || [];
+  renderQuestions();
+}
+
+function passes(r) {
+  const f = STATE.filter;
+  if (f === 'wrong' && r.em === 1) return false;
+  if (f === 'right' && r.em !== 1) return false;
+  if (f === 'replanned' && !r.replanned) return false;
+  if (f === 'recovered' && !(r.replanned && r.best_cycle > 0 && r.em === 1)) return false;
+  if (f === 'abstain' && r.verdict !== 'abstain') return false;
+  if (STATE.search) {
+    const hay = (r.question + ' ' + r.answer + ' ' + r.gold + ' ' + r.qid).toLowerCase();
+    if (!hay.includes(STATE.search)) return false;
+  }
+  return true;
+}
+
+function renderQuestions() {
+  const rows = STATE.rows.filter(passes);
+  $('#qcount').textContent = `${rows.length} of ${STATE.rows.length}`;
+  $('#qhead').innerHTML = '<tr><th>EM</th><th>F1</th><th>question</th><th>answer</th>'
+    + '<th>gold</th><th>conf</th><th>verdict</th><th>cyc</th><th>calls</th><th>s</th></tr>';
+  const body = $('#qbody'); body.innerHTML = '';
+  for (const r of rows.slice(0, 400)) {
+    const tr = el('tr');
+    tr.onclick = () => openDetail(r.qid);
+    const ok = r.em === 1;
+    tr.innerHTML =
+      `<td class="${ok ? 'good' : 'bad'}">${r.em === null ? '—' : (ok ? '✓' : '✗')}</td>` +
+      `<td>${num(r.f1, 2)}</td>` +
+      `<td class="q">${esc(r.question)}</td>` +
+      `<td>${esc(r.answer)}</td>` +
+      `<td class="muted">${esc(r.gold)}</td>` +
+      `<td>${num(r.confidence, 2)}</td>` +
+      `<td class="${r.verdict === 'accept' ? '' : 'warn'}">${esc(r.verdict)}</td>` +
+      `<td>${r.cycles ?? '—'}${r.replanned ? '<span class="tag" style="margin-left:4px">↺</span>' : ''}</td>` +
+      `<td>${r.llm_calls ?? '—'}</td>` +
+      `<td>${num(r.latency_s, 1)}</td>`;
+    body.appendChild(tr);
+  }
+  if (rows.length > 400) body.appendChild(el('tr', 'muted')).innerHTML =
+    `<td colspan="10" class="muted">showing the first 400 of ${rows.length}</td>`;
+}
+
+/* ---------------- one question ---------------- */
+async function openDetail(qid) {
+  const d = await (await fetch(`/api/question?run=${encodeURIComponent(STATE.run)}&qid=${encodeURIComponent(qid)}`)).json();
+  renderDetail($('#detail'), d);
+  $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function transitionPath(list) {
+  const wrap = el('div', 'path');
+  for (const t of list || []) {
+    const id = String(t).split(':')[0];
+    const span = el('span', 't' + (id === 'T11' ? ' back' : id === 'T9' ? ' rev' : ''), t);
+    wrap.appendChild(span); wrap.appendChild(document.createTextNode(' '));
+  }
+  return wrap;
+}
+
+function renderDetail(host, d) {
+  const r = d.record, s = d.scores || {};
+  host.innerHTML = '';
+
+  const top = el('div', 'card');
+  top.appendChild(el('h2', null, 'Question'));
+  top.appendChild(el('div', null, r.question));
+  const kv = el('dl', 'kv');
+  const gold = (r.gold || {}).answer;
+  const pairs = [
+    ['final answer', r.final_answer],
+    ['gold', gold ?? '(none — live question)'],
+    ['answer sentence', r.answer_sentence],
+    ['citations', (r.citations || []).join(', ')],
+    ['confidence', num(r.confidence)],
+    ['verdict', r.verdict],
+    ['terminated by', r.terminated_by],
+    ['selected cycle', r.best_cycle],
+    ['EM / F1', s.em === undefined ? '—' : `${num(s.em, 0)} / ${num(s.f1)}`],
+    ['SP-F1 / R@10', s.sp_f1 === undefined ? '—' : `${num(s.sp_f1)} / ${num(s['recall@10'])}`],
+    ['model calls', (r.metrics || {}).llm_calls],
+    ['tool calls', (r.metrics || {}).tool_calls],
+    ['latency', num((r.metrics || {}).latency_s, 1) + ' s'],
+    ['citation grounding', num((r.metrics || {}).citation_grounding)],
+    ['qid', r.qid],
+  ];
+  for (const [k, v] of pairs) {
+    kv.appendChild(el('dt', null, k));
+    kv.appendChild(el('dd', null, v === undefined || v === null ? '—' : String(v)));
+  }
+  top.appendChild(kv);
+  host.appendChild(top);
+
+  if (r._notes && r._notes.length) {
+    const n = el('div', 'note');
+    n.textContent = 'DEGRADED: ' + r._notes.join(' · ');
+    host.appendChild(n);
+  }
+
+  // cycles: plan, candidate, verification, side by side per revision
+  const plans = r.plans || [], cands = r.candidates || [], vers = r.verifications || [];
+  const nCycles = Math.max(plans.length, cands.length, vers.length, 1);
+  const cyc = el('div', 'card');
+  cyc.appendChild(el('h2', null, nCycles > 1 ? `${nCycles} cycles — the loop fired` : 'One pass'));
+  for (let i = 0; i < nCycles; i++) {
+    const box = el('div', 'cycle' + (i === r.best_cycle ? ' sel' : ''));
+    box.appendChild(el('div', 'mono muted', `cycle ${i}${i === r.best_cycle ? '  ← selected' : ''}`));
+    const plan = plans.find(p => (p.revision ?? 0) === i) || plans[i];
+    if (plan) {
+      box.appendChild(el('div', 'mono', `strategy ${plan.strategy} (model said ${plan.strategy_llm}) · origin ${plan.origin}`));
+      for (const sq of plan.subqueries || []) {
+        const dep = (sq.depends_on || []).length ? ` ← ${sq.depends_on.join(', ')}` : '';
+        box.appendChild(el('div', 'mono dimmer', `  [${sq.id}] hop ${sq.hop} · ${sq.intent}/${sq.answer_type} · ${sq.tool_hint}${dep}`));
+        box.appendChild(el('div', null, '  ' + sq.text));
+      }
+    }
+    const c = cands.find(x => x.cycle === i);
+    if (c) box.appendChild(el('div', 'mono', `  answer ${JSON.stringify(c.answer)} · confidence ${num(c.confidence)} · sufficient ${c.sufficient}`));
+    const v = vers[i];
+    if (v) {
+      box.appendChild(el('div', 'mono ' + (v.verdict === 'accept' ? 'good' : 'warn'),
+        `  ${v.verdict.toUpperCase()} ${num(v.confidence)} · nli ${num(v.nli_support)} · cite ${num(v.citation_grounding)} · retr ${num(v.retrieval_agreement)} · llm ${v.llm_support === null ? 'not called' : num(v.llm_support)}`));
+      for (const cl of (v.claims || []).slice(0, 3)) {
+        box.appendChild(el('div', 'mono dimmer',
+          `    ${cl.nli_label} ${num(cl.nli_score)} vs ${cl.best_premise_id} → ${cl.supported ? 'supported' : 'NOT supported'}`));
+      }
+      if ((v.suggested_subqueries || []).length) {
+        box.appendChild(el('div', 'mono warn', '    directive → ' + v.suggested_subqueries[0].slice(0, 140)));
+      }
+    }
+    cyc.appendChild(box);
+  }
+  host.appendChild(cyc);
+
+  // retrieval + kg
+  const ret = el('div', 'card');
+  ret.appendChild(el('h2', null, 'Retrieval and graph'));
+  for (const [sqid, b] of Object.entries(r.retrieved || {})) {
+    ret.appendChild(el('div', 'mono', `[${sqid}] ${b.tool} · ${b.selector}/${b.rule_id} · rerank ${b.rerank_applied} · ${b.n_candidates} candidates · ${num(b.latency_s, 2)}s`));
+    ret.appendChild(el('div', 'mono dimmer', '  ' + (b.reason || '')));
+    for (const p of (b.passages || []).slice(0, 3))
+      ret.appendChild(el('div', 'mono dimmer', `    ${num(p.score)}  ${p.title || p.doc_id}`));
+  }
+  for (const [sqid, b] of Object.entries(r.kg || {})) {
+    ret.appendChild(el('div', 'mono', `[${sqid}] kg · seeds ${JSON.stringify(b.seeds)} · bridge ${b.bridge_entity || 'none'} · ${b.n_paths} paths · ${b.n_neighbors} neighbours · ${num(b.latency_s, 2)}s`));
+  }
+  if (!Object.keys(r.retrieved || {}).length) ret.appendChild(el('div', 'muted', 'no retrieval recorded'));
+  host.appendChild(ret);
+
+  // evidence
+  const ev = el('div', 'card');
+  ev.appendChild(el('h2', null, `Evidence (${(r.evidence || []).length})`));
+  const cited = new Set(r.citations || []);
+  for (const e of (r.evidence || []).slice(0, 12)) {
+    const box = el('div', 'ev');
+    box.appendChild(el('div', 'meta' + (cited.has(e.evidence_id) ? ' good' : ''),
+      `${e.evidence_id}${cited.has(e.evidence_id) ? ' ← cited' : ''} · ${e.provenance} · ${e.title} s${e.sent_id} · ${num(e.score)}`));
+    box.appendChild(el('div', null, e.text));
+    ev.appendChild(box);
+  }
+  host.appendChild(ev);
+
+  const path = el('div', 'card');
+  path.appendChild(el('h2', null, 'State machine path'));
+  path.appendChild(transitionPath(r.transitions));
+  path.appendChild(el('div', 'muted', 'T9 = verdict revise · T11 = the backward edge into PLAN'));
+  host.appendChild(path);
+}
+
+/* ---------------- results ---------------- */
+let tablesLoaded = false;
+async function loadTables() {
+  if (tablesLoaded) return; tablesLoaded = true;
+  const d = await (await fetch('/api/tables')).json();
+  const host = $('#tables'); host.innerHTML = '';
+  for (const t of d.tables || []) {
+    const card = el('div', 'card');
+    card.appendChild(el('h2', null, t.label));
+    const sc = el('div', 'scroll');
+    const tbl = el('table');
+    const thead = el('thead'); const hr = el('tr');
+    for (const h of t.header) hr.appendChild(el('th', null, h));
+    thead.appendChild(hr); tbl.appendChild(thead);
+    const tb = el('tbody');
+    for (const row of t.rows) {
+      const tr = el('tr');
+      for (const c of row) {
+        const td = el('td', c.includes('▾') ? 'bad' : '', c);
+        tr.appendChild(td);
+      }
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb); sc.appendChild(tbl); card.appendChild(sc);
+    const cap = el('div', 'muted', t.caption);
+    cap.style.marginTop = '10px'; cap.style.fontSize = '12px';
+    card.appendChild(cap);
+    host.appendChild(card);
+  }
+  const cal = d.calibration || {};
+  for (const [name, data] of Object.entries(cal)) {
+    const card = el('div', 'card');
+    card.appendChild(el('h2', null, 'calibration · ' + name));
+    const pre = el('pre', 'muted', JSON.stringify(data, null, 2).slice(0, 4000));
+    card.appendChild(pre); host.appendChild(card);
+  }
+}
+
+/* ---------------- ask ---------------- */
+function renderAskGuard() {
+  const g = $('#askguard');
+  if (STATE.live) {
+    g.innerHTML = '<div class="note">Live answering is on. This loads the reranker, '
+      + 'embedder and NLI model onto the GPU. If an evaluation run is going, stop this first.</div>';
+    $('#asend').disabled = false;
+  } else {
+    g.innerHTML = '<div class="note">Live answering is <b>disabled</b>. Restart with '
+      + '<span class="mono">python scripts/dashboard.py --live</span> — and only when '
+      + 'no evaluation run is using the GPU.</div>';
+    $('#asend').disabled = true;
+  }
+}
+
+$('#asend').onclick = async () => {
+  const q = $('#aq').value.trim();
+  if (!q) return;
+  $('#asend').disabled = true;
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    $('#astatus').textContent = `running… ${((Date.now() - t0) / 1000).toFixed(0)}s (30–60s is normal)`;
+  }, 500);
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, dataset: $('#ads').value, config: $('#acfg').value }),
+    });
+    const d = await res.json();
+    clearInterval(tick);
+    if (d.error) { $('#astatus').innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; }
+    else {
+      $('#astatus').textContent = `done in ${num(d.record._wall_s, 1)}s`;
+      renderDetail($('#adetail'), d);
+    }
+  } catch (e) {
+    clearInterval(tick);
+    $('#astatus').innerHTML = '<span class="bad">' + esc(e.message) + '</span>';
+  }
+  $('#asend').disabled = !STATE.live;
+};
+
+/* ---------------- boot ---------------- */
+loadStatus().then(renderAskGuard);
+setInterval(loadStatus, 20000);
+</script>
+</body>
+</html>

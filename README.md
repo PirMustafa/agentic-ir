@@ -194,6 +194,28 @@ python -m agentic_ir.eval.run_eval --dataset hotpotqa --config agentic_full
 python -m agentic_ir.cli tables
 ```
 
+### Dashboard
+
+```bash
+python scripts/dashboard.py                      # http://127.0.0.1:8000
+python scripts/dashboard.py --sweep-pid 34728    # also report whether a sweep is alive
+python scripts/dashboard.py --live               # enable the Ask tab (uses the GPU)
+```
+
+Four tabs. **Sweep** is the full 9×2 configuration grid with progress bars, so a
+run nobody has started shows as an empty row rather than as an absence.
+**Questions** browses every question of a run with its scores attached and
+filters for the interesting ones — wrong, re-planned, recovered by re-planning,
+abstained — and clicking one opens the full trace: every cycle's plan,
+sub-queries, candidate and verification, the retrieval with the rule that chose
+each tool, the evidence with the cited sentences marked, and the state-machine
+path with `T9` and `T11` highlighted. **Results** renders the generated tables.
+**Ask** runs the live pipeline.
+
+Standard library only — no framework, nothing to install. The Ask tab is off by
+default because answering one question loads the reranker, embedder and NLI
+model onto the same 8 GB card an evaluation run uses.
+
 ### Guided walkthrough
 
 ```bash
@@ -234,6 +256,7 @@ the report says so.
 config/config.yaml         Every tunable knob; values referenced in the report
 scripts/                   Data download, corpus construction, index building
 scripts/demo.py            Guided walkthrough; replays real runs, needs no GPU
+scripts/dashboard.py       Local web dashboard: sweep progress, trace browser, live ask
 src/agentic_ir/
   ├── agents/              Planner · Retriever · KG Navigator · Verifier · Synthesizer
   ├── tools/               Tool registry exposed to the Retrieval agent
