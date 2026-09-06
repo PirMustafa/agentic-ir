@@ -5,7 +5,7 @@
 % report/main.tex already loads both.
 % Source runs:
 %   hotpotqa/agentic_full: agentic_full_hotpotqa_20260904T221533Z (250 questions)
-%   hotpotqa/agentic_no_kg: agentic_no_kg_hotpotqa_20260905T232702Z (17 questions)  PRELIMINARY: short of the 250-question evaluation slice; deltas and significance withheld
+%   hotpotqa/agentic_no_kg: agentic_no_kg_hotpotqa_20260905T232702Z (184 questions)  PRELIMINARY: short of the 250-question evaluation slice; deltas and significance withheld
 %   hotpotqa/agentic_no_planner: agentic_no_planner_hotpotqa_20260905T224906Z (250 questions)
 %   hotpotqa/agentic_no_verifier: agentic_no_verifier_hotpotqa_20260905T213927Z (250 questions)
 %   hotpotqa/bm25_only: bm25_only_hotpotqa_20260902T113736Z (250 questions)
@@ -24,25 +24,25 @@
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \caption{Answer quality on \texttt{hotpotqa}. Exact match and token-level F1 follow the official HotpotQA evaluation script, including its yes/no short circuit; SP-EM and SP-F1 are set metrics over $(\textit{title}, \textit{sent\_id})$ supporting-fact pairs. $n$ is the number of questions scored. Reference system for the EM and F1 columns: \texttt{self\_ask}, marked $\dagger$. \textbf{Bold} = significantly better than the reference, $^{\downarrow}$ = significantly worse (paired bootstrap, 95\% CI of the paired difference excluding zero). Unmarked differences are not significant. Reference system for the SP-F1 column: \texttt{hybrid\_rerank}, marked $\dagger$. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{bm25\_only}, \texttt{dense\_only} and \texttt{hybrid\_rerank} are retrieval-only: they emit a ranking and no answer, so the EM, F1 and $\Delta$F1 columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened. \textbf{$^{\ddagger}$ marks a preliminary row}: \texttt{agentic\_no\_kg} ($n=17$) had not covered the full 250-question evaluation slice when this table was generated, so the point estimates are over the questions completed so far and every delta, $p$-value and significance mark against it is withheld -- a paired test between a prefix and the full slice is not a paired test. These numbers will move; they are not final results. \textbf{$^{\ast}$ marks a score measured differently, not a worse system}: every record of \texttt{naive\_rag} and \texttt{self\_ask} cites passage identifiers (\texttt{p1}, \texttt{p2}) that name none of the evidence identifiers the same record stores, because the adapter keys evidence \texttt{e1..en}. The citation signal is therefore unusable and \texttt{predicted\_supporting\_facts} falls back to scoring the full evidence pool rather than the cited subset. That fallback favours recall and pays for it in precision, so these scores are not strictly comparable to a system whose citations resolve and which is judged on what it actually cited. Before the fallback was made conditional on citations resolving, the same mismatch produced exact zeros that read as a categorical finding; see \texttt{docs/report-audit.md}.}
+  \caption{Answer quality on \texttt{hotpotqa}. Exact match and token-level F1 follow the official HotpotQA evaluation script, including its yes/no short circuit; SP-EM, SP-P, SP-R and SP-F1 are set metrics over $(\textit{title}, \textit{sent\_id})$ supporting-fact pairs. $n$ is the number of questions scored. Reference system for the EM and F1 columns: \texttt{self\_ask}, marked $\dagger$. \textbf{Bold} = significantly better than the reference, $^{\downarrow}$ = significantly worse (paired bootstrap, 95\% CI of the paired difference excluding zero). Unmarked differences are not significant. Reference system for the supporting-fact columns: \texttt{hybrid\_rerank}, marked $\dagger$. \textbf{SP-EM, SP-P, SP-R and SP-F1 are not one protocol}: \texttt{agentic\_full}, \texttt{agentic\_no\_planner}, \texttt{agentic\_no\_kg} and \texttt{agentic\_no\_verifier} are scored on the sentences they actually cited (mean 1.5 sentences per question), whereas \texttt{bm25\_only}, \texttt{dense\_only}, \texttt{hybrid\_rerank}, \texttt{naive\_rag} and \texttt{self\_ask} are scored on their whole evidence pool (mean 6.9) because they emit no citation that resolves to that evidence, so a single SP-F1 is not comparable across the two groups and no significance mark is placed between rows of different protocol; \textit{Pool SP-R} is the recall of the whole evidence pool for every row alike and is the one supporting-fact column compared like for like. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{bm25\_only}, \texttt{dense\_only} and \texttt{hybrid\_rerank} are retrieval-only: they emit a ranking and no answer, so the EM, F1 and $\Delta$F1 columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened. \textbf{$^{\ddagger}$ marks a preliminary row}: \texttt{agentic\_no\_kg} ($n=184$) had not covered the full 250-question evaluation slice when this table was generated, so the point estimates are over the questions completed so far and every delta, $p$-value and significance mark against it is withheld -- a paired test between a prefix and the full slice is not a paired test. These numbers will move; they are not final results. \textbf{$^{\ast}$ marks a score measured differently, not a worse system}: every record of \texttt{naive\_rag} and \texttt{self\_ask} cites passage identifiers (\texttt{p1}, \texttt{p2}) that name none of the evidence identifiers the same record stores, because the adapter keys evidence \texttt{e1..en}. The citation signal is therefore unusable and \texttt{predicted\_supporting\_facts} falls back to scoring the full evidence pool rather than the cited subset. That fallback favours recall and pays for it in precision, so these scores are not strictly comparable to a system whose citations resolve and which is judged on what it actually cited. Before the fallback was made conditional on citations resolving, the same mismatch produced exact zeros that read as a categorical finding; see \texttt{docs/report-audit.md}.}
   \label{tab:main-answer-hotpotqa}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
-  \begin{tabular}{lrrrcrrr}
+  \begin{tabular}{lrrrcrrrrrr}
     \toprule
-    System & $n$ & EM & F1 & F1 95\% CI & SP-EM & SP-F1 & $\Delta$F1 vs.\ ref.\ [95\% CI] \\
+    System & $n$ & EM & F1 & F1 95\% CI & SP-EM & SP-P & SP-R & SP-F1 & Pool SP-R & $\Delta$F1 vs.\ ref.\ [95\% CI] \\
     \midrule
-    \multicolumn{8}{@{}l}{\textit{Baselines (weakest first)}} \\
-    \texttt{bm25\_only} & 250 & -- & -- & -- & 0.012 & 0.330$^{\downarrow}$ & -- \\
-    \texttt{dense\_only} & 250 & -- & -- & -- & 0.020 & 0.377$^{\downarrow}$ & -- \\
-    \texttt{hybrid\_rerank} & 250 & -- & -- & -- & 0.016 & 0.412$^{\dagger}$ & -- \\
-    \texttt{naive\_rag} & 250 & 0.496 & 0.581 & [0.522, 0.641] & 0.016$^{\ast}$ & 0.412$^{\ast}$ & -0.022 [-0.060, +0.018] \\
-    \texttt{self\_ask} & 250 & 0.504$^{\dagger}$ & 0.603$^{\dagger}$ & [0.547, 0.659] & 0.016$^{\ast}$ & 0.405$^{\ast}$ & -- \\
+    \multicolumn{11}{@{}l}{\textit{Baselines (weakest first)}} \\
+    \texttt{bm25\_only} & 250 & -- & -- & -- & 0.012 & 0.245$^{\downarrow}$ & 0.588$^{\downarrow}$ & 0.330$^{\downarrow}$ & 0.588$^{\downarrow}$ & -- \\
+    \texttt{dense\_only} & 250 & -- & -- & -- & 0.020 & 0.283$^{\downarrow}$ & 0.650$^{\downarrow}$ & 0.377$^{\downarrow}$ & 0.650$^{\downarrow}$ & -- \\
+    \texttt{hybrid\_rerank} & 250 & -- & -- & -- & 0.016 & 0.308$^{\dagger}$ & 0.706$^{\dagger}$ & 0.412$^{\dagger}$ & 0.706$^{\dagger}$ & -- \\
+    \texttt{naive\_rag} & 250 & 0.496 & 0.581 & [0.522, 0.641] & 0.016$^{\ast}$ & 0.308$^{\ast}$ & 0.706$^{\ast}$ & 0.412$^{\ast}$ & 0.706 & -0.022 [-0.060, +0.018] \\
+    \texttt{self\_ask} & 250 & 0.504$^{\dagger}$ & 0.603$^{\dagger}$ & [0.547, 0.659] & 0.016$^{\ast}$ & 0.302$^{\ast}$ & 0.696$^{\ast}$ & 0.405$^{\ast}$ & 0.696 & -- \\
     \addlinespace
-    \multicolumn{8}{@{}l}{\textit{Agentic system and ablations}} \\
-    \texttt{agentic\_full} & 250 & 0.432$^{\downarrow}$ & 0.510$^{\downarrow}$ & [0.451, 0.571] & 0.088 & \textbf{0.481} & -0.093 [-0.145, -0.039] \\
-    \texttt{agentic\_no\_planner} & 250 & 0.456 & 0.543$^{\downarrow}$ & [0.489, 0.602] & 0.136 & \textbf{0.508} & -0.060 [-0.106, -0.009] \\
-    \texttt{agentic\_no\_kg} & 17$^{\ddagger}$ & 0.471 & 0.565 & [0.329, 0.777] & 0.235 & 0.475 & -- \\
-    \texttt{agentic\_no\_verifier} & 250 & 0.396$^{\downarrow}$ & 0.474$^{\downarrow}$ & [0.418, 0.536] & 0.108 & \textbf{0.491} & -0.130 [-0.185, -0.074] \\
+    \multicolumn{11}{@{}l}{\textit{Agentic system and ablations}} \\
+    \texttt{agentic\_full} & 250 & 0.432$^{\downarrow}$ & 0.510$^{\downarrow}$ & [0.451, 0.571] & 0.088 & 0.654 & 0.406 & 0.481 & \textbf{0.793} & -0.093 [-0.145, -0.039] \\
+    \texttt{agentic\_no\_planner} & 250 & 0.456 & 0.543$^{\downarrow}$ & [0.489, 0.602] & 0.136 & 0.685 & 0.431 & 0.508 & \textbf{0.817} & -0.060 [-0.106, -0.009] \\
+    \texttt{agentic\_no\_kg} & 184$^{\ddagger}$ & 0.418 & 0.525 & [0.456, 0.594] & 0.103 & 0.658 & 0.407 & 0.482 & 0.804 & -- \\
+    \texttt{agentic\_no\_verifier} & 250 & 0.396$^{\downarrow}$ & 0.474$^{\downarrow}$ & [0.418, 0.536] & 0.108 & 0.672 & 0.414 & 0.491 & \textbf{0.795} & -0.130 [-0.185, -0.074] \\
     \bottomrule
   \end{tabular}}
 \end{table}
@@ -51,7 +51,7 @@
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \caption{Retrieval quality on \texttt{hotpotqa}, computed with \texttt{pytrec\_eval} over the reciprocal-rank fusion of every sub-query's ranking and judged against the gold supporting-fact documents. A multi-hop system issues several queries, so ``the ranking'' is not directly observed; fusing them is how the orchestrator itself pools evidence, and it needs no score calibration between BM25 and cosine. Reference system for the retrieval columns: \texttt{hybrid\_rerank}, marked $\dagger$. \textbf{Bold} = significantly better than the reference, $^{\downarrow}$ = significantly worse (paired bootstrap, 95\% CI of the paired difference excluding zero). Unmarked differences are not significant. \texttt{--} across a whole row marks a configuration that has not been run. \textbf{$^{\ddagger}$ marks a preliminary row}: \texttt{agentic\_no\_kg} ($n=17$) had not covered the full 250-question evaluation slice when this table was generated, so the point estimates are over the questions completed so far and every delta, $p$-value and significance mark against it is withheld -- a paired test between a prefix and the full slice is not a paired test. These numbers will move; they are not final results.}
+  \caption{Retrieval quality on \texttt{hotpotqa}, computed with \texttt{pytrec\_eval} over the reciprocal-rank fusion of every sub-query's ranking and judged against the gold supporting-fact documents. A multi-hop system issues several queries, so ``the ranking'' is not directly observed; fusing them is how the orchestrator itself pools evidence, and it needs no score calibration between BM25 and cosine. Reference system for the retrieval columns: \texttt{hybrid\_rerank}, marked $\dagger$. \textbf{Bold} = significantly better than the reference, $^{\downarrow}$ = significantly worse (paired bootstrap, 95\% CI of the paired difference excluding zero). Unmarked differences are not significant. \texttt{--} across a whole row marks a configuration that has not been run. \textbf{$^{\ddagger}$ marks a preliminary row}: \texttt{agentic\_no\_kg} ($n=184$) had not covered the full 250-question evaluation slice when this table was generated, so the point estimates are over the questions completed so far and every delta, $p$-value and significance mark against it is withheld -- a paired test between a prefix and the full slice is not a paired test. These numbers will move; they are not final results.}
   \label{tab:main-retrieval-hotpotqa}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
   \begin{tabular}{lrrrrcr}
@@ -68,7 +68,7 @@
     \multicolumn{7}{@{}l}{\textit{Agentic system and ablations}} \\
     \texttt{agentic\_full} & 0.602 & 0.742 & 0.812$^{\downarrow}$ & 0.763$^{\downarrow}$ & [0.734, 0.791] & 0.899 \\
     \texttt{agentic\_no\_planner} & 0.686 & 0.820 & 0.872 & 0.831$^{\downarrow}$ & [0.804, 0.855] & 0.933 \\
-    \texttt{agentic\_no\_kg}$^{\ddagger}$ & 0.529 & 0.794 & 0.853 & 0.751 & [0.619, 0.852] & 0.838 \\
+    \texttt{agentic\_no\_kg}$^{\ddagger}$ & 0.606 & 0.764 & 0.837 & 0.775 & [0.742, 0.806] & 0.894 \\
     \texttt{agentic\_no\_verifier} & 0.612 & 0.756 & 0.796$^{\downarrow}$ & 0.758$^{\downarrow}$ & [0.729, 0.786] & 0.888 \\
     \bottomrule
   \end{tabular}}
@@ -78,25 +78,25 @@
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \caption{Answer quality on \texttt{twowiki}. Exact match and token-level F1 follow the official HotpotQA evaluation script, including its yes/no short circuit; SP-EM and SP-F1 are set metrics over $(\textit{title}, \textit{sent\_id})$ supporting-fact pairs. $n$ is the number of questions scored. Reference system for the EM and F1 columns: \texttt{self\_ask}, marked $\dagger$. \textbf{Bold} = significantly better than the reference, $^{\downarrow}$ = significantly worse (paired bootstrap, 95\% CI of the paired difference excluding zero). Unmarked differences are not significant. Reference system for the SP-F1 column: \texttt{hybrid\_rerank}, marked $\dagger$. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{bm25\_only}, \texttt{dense\_only} and \texttt{hybrid\_rerank} are retrieval-only: they emit a ranking and no answer, so the EM, F1 and $\Delta$F1 columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened. \textbf{$^{\ast}$ marks a score measured differently, not a worse system}: every record of \texttt{naive\_rag} and \texttt{self\_ask} cites passage identifiers (\texttt{p1}, \texttt{p2}) that name none of the evidence identifiers the same record stores, because the adapter keys evidence \texttt{e1..en}. The citation signal is therefore unusable and \texttt{predicted\_supporting\_facts} falls back to scoring the full evidence pool rather than the cited subset. That fallback favours recall and pays for it in precision, so these scores are not strictly comparable to a system whose citations resolve and which is judged on what it actually cited. Before the fallback was made conditional on citations resolving, the same mismatch produced exact zeros that read as a categorical finding; see \texttt{docs/report-audit.md}.}
+  \caption{Answer quality on \texttt{twowiki}. Exact match and token-level F1 follow the official HotpotQA evaluation script, including its yes/no short circuit; SP-EM, SP-P, SP-R and SP-F1 are set metrics over $(\textit{title}, \textit{sent\_id})$ supporting-fact pairs. $n$ is the number of questions scored. Reference system for the EM and F1 columns: \texttt{self\_ask}, marked $\dagger$. \textbf{Bold} = significantly better than the reference, $^{\downarrow}$ = significantly worse (paired bootstrap, 95\% CI of the paired difference excluding zero). Unmarked differences are not significant. Reference system for the supporting-fact columns: \texttt{hybrid\_rerank}, marked $\dagger$. \textbf{SP-EM, SP-P, SP-R and SP-F1 are not one protocol}: \texttt{agentic\_full} is scored on the sentences it actually cited (mean 1.6 sentences per question), whereas \texttt{bm25\_only}, \texttt{dense\_only}, \texttt{hybrid\_rerank}, \texttt{naive\_rag} and \texttt{self\_ask} are scored on their whole evidence pool (mean 8.9) because they emit no citation that resolves to that evidence, so a single SP-F1 is not comparable across the two groups and no significance mark is placed between rows of different protocol; \textit{Pool SP-R} is the recall of the whole evidence pool for every row alike and is the one supporting-fact column compared like for like. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{bm25\_only}, \texttt{dense\_only} and \texttt{hybrid\_rerank} are retrieval-only: they emit a ranking and no answer, so the EM, F1 and $\Delta$F1 columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened. \textbf{$^{\ast}$ marks a score measured differently, not a worse system}: every record of \texttt{naive\_rag} and \texttt{self\_ask} cites passage identifiers (\texttt{p1}, \texttt{p2}) that name none of the evidence identifiers the same record stores, because the adapter keys evidence \texttt{e1..en}. The citation signal is therefore unusable and \texttt{predicted\_supporting\_facts} falls back to scoring the full evidence pool rather than the cited subset. That fallback favours recall and pays for it in precision, so these scores are not strictly comparable to a system whose citations resolve and which is judged on what it actually cited. Before the fallback was made conditional on citations resolving, the same mismatch produced exact zeros that read as a categorical finding; see \texttt{docs/report-audit.md}.}
   \label{tab:main-answer-twowiki}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
-  \begin{tabular}{lrrrcrrr}
+  \begin{tabular}{lrrrcrrrrrr}
     \toprule
-    System & $n$ & EM & F1 & F1 95\% CI & SP-EM & SP-F1 & $\Delta$F1 vs.\ ref.\ [95\% CI] \\
+    System & $n$ & EM & F1 & F1 95\% CI & SP-EM & SP-P & SP-R & SP-F1 & Pool SP-R & $\Delta$F1 vs.\ ref.\ [95\% CI] \\
     \midrule
-    \multicolumn{8}{@{}l}{\textit{Baselines (weakest first)}} \\
-    \texttt{bm25\_only} & 250 & -- & -- & -- & 0.008 & 0.273$^{\downarrow}$ & -- \\
-    \texttt{dense\_only} & 250 & -- & -- & -- & 0.020 & 0.314 & -- \\
-    \texttt{hybrid\_rerank} & 250 & -- & -- & -- & 0.016 & 0.327$^{\dagger}$ & -- \\
-    \texttt{naive\_rag} & 250 & 0.152$^{\downarrow}$ & 0.200$^{\downarrow}$ & [0.155, 0.246] & 0.016$^{\ast}$ & 0.327$^{\ast}$ & -0.110 [-0.160, -0.063] \\
-    \texttt{self\_ask} & 250 & 0.264$^{\dagger}$ & 0.310$^{\dagger}$ & [0.259, 0.364] & 0.016$^{\ast}$ & 0.318$^{\ast}$ & -- \\
+    \multicolumn{11}{@{}l}{\textit{Baselines (weakest first)}} \\
+    \texttt{bm25\_only} & 250 & -- & -- & -- & 0.008 & 0.208$^{\downarrow}$ & 0.551$^{\downarrow}$ & 0.273$^{\downarrow}$ & 0.551$^{\downarrow}$ & -- \\
+    \texttt{dense\_only} & 250 & -- & -- & -- & 0.020 & 0.244 & 0.605 & 0.314 & 0.605 & -- \\
+    \texttt{hybrid\_rerank} & 250 & -- & -- & -- & 0.016 & 0.255$^{\dagger}$ & 0.622$^{\dagger}$ & 0.327$^{\dagger}$ & 0.622$^{\dagger}$ & -- \\
+    \texttt{naive\_rag} & 250 & 0.152$^{\downarrow}$ & 0.200$^{\downarrow}$ & [0.155, 0.246] & 0.016$^{\ast}$ & 0.255$^{\ast}$ & 0.622$^{\ast}$ & 0.327$^{\ast}$ & 0.622 & -0.110 [-0.160, -0.063] \\
+    \texttt{self\_ask} & 250 & 0.264$^{\dagger}$ & 0.310$^{\dagger}$ & [0.259, 0.364] & 0.016$^{\ast}$ & 0.246$^{\ast}$ & 0.627$^{\ast}$ & 0.318$^{\ast}$ & 0.627 & -- \\
     \addlinespace
-    \multicolumn{8}{@{}l}{\textit{Agentic system and ablations}} \\
-    \texttt{agentic\_full} & 250 & 0.224 & 0.267 & [0.216, 0.321] & 0.124 & \textbf{0.421} & -0.043 [-0.100, +0.014] \\
-    \texttt{agentic\_no\_planner} & -- & -- & -- & -- & -- & -- & -- \\
-    \texttt{agentic\_no\_kg} & -- & -- & -- & -- & -- & -- & -- \\
-    \texttt{agentic\_no\_verifier} & -- & -- & -- & -- & -- & -- & -- \\
+    \multicolumn{11}{@{}l}{\textit{Agentic system and ablations}} \\
+    \texttt{agentic\_full} & 250 & 0.224 & 0.267 & [0.216, 0.321] & 0.124 & 0.558 & 0.367 & 0.421 & \textbf{0.684} & -0.043 [-0.100, +0.014] \\
+    \texttt{agentic\_no\_planner} & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+    \texttt{agentic\_no\_kg} & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+    \texttt{agentic\_no\_verifier} & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
     \bottomrule
   \end{tabular}}
 \end{table}

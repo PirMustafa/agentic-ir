@@ -12,13 +12,19 @@ import math
 import pytest
 
 from agentic_ir.eval.metrics import (
+    SAVED_SOURCES,
     answer_f1,
+    count_saved_calls,
+    decompose_saved_calls,
+    derive_question_metrics,
     exact_match,
     joint_scores,
     normalize_answer,
     rankings_to_run,
+    reachable_llm_paths,
     retrieval_metrics_per_query,
     score_question,
+    selected_plan_depth,
     summarise_agent_metrics,
     supporting_fact_scores,
 )
@@ -217,3 +223,155 @@ def test_citation_grounding_excludes_unanswered():
 def test_empty_records_do_not_divide_by_zero():
     m = summarise_agent_metrics([])
     assert m.n_questions == 0 and m.llm_calls == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Saved-call recount from the step trace
+# ---------------------------------------------------------------------------
+
+def _step(agent, *, output=None, inputs=None, cycle=0):
+    return {
+        "agent": agent, "cycle": cycle,
+        "output_summary": output or {}, "input_summary": inputs or {},
+        "llm_calls": [], "tool_calls": [],
+    }
+
+
+#: One question, shaped like a real ``agentic_full`` trace record: every
+#: rule that calls ``note_saved`` fires once, plus the extractor rungs that
+#: never call it, plus a verifier skip that is not a gate.
+_RECORD = {
+    "config_name": "agentic_full",
+    "best_cycle": 0,
+    "metrics": {
+        "llm_calls": 3, "llm_calls_saved": 4, "plan_depth": 1,
+        "cycles": 2, "replans": 2, "best_cycle": 0,
+    },
+    "plans": [{"revision": 0, "depth": 3}, {"revision": 1, "depth": 1}],
+    "steps": [
+        _step("planner", output={"origin": "llm", "depth": 3}),
+        _step("retriever", output={"selector": "planner_hint", "rule_id": "R1_planner_hint"}),
+        _step("kg", output={"linked_by": "alias_match"}),
+        _step("extractor", output={"rung": 2, "answer": "x", "bridge": True}),
+        _step("retriever", output={"selector": "heuristic", "rule_id": "R3_entity_dense"}),
+        _step("kg", output={"linked_by": "retrieval_titles"}),
+        _step("extractor", output={"rung": 4, "answer": "y", "bridge": False}),
+        _step("verifier", inputs={"adjudication_skipped": "outside_uncertainty_band"}),
+        _step("planner", output={"origin": "llm", "depth": 1}, cycle=1),
+        _step("extractor", output={"rung": 1, "answer": "z", "bridge": True}, cycle=1),
+        _step("verifier", inputs={"adjudication_skipped": "synthesizer_insufficient"}, cycle=1),
+        # A third re-plan the orchestrator discarded (T2b): a planner step,
+        # no plan in ``plans``, no cycle.
+        _step("planner", output={"origin": "llm", "depth": 1}, cycle=2),
+    ],
+}
+
+_HEADLINE_CONFIG = {
+    "agents": {
+        "retriever": {"heuristic_shortcut": True},
+        "kg": {"entity_linker": "alias_match"},
+        "verifier": {"enabled": True, "method": "nli_plus_llm"},
+    }
+}
+
+
+def test_decomposition_attributes_every_credit_to_its_rule():
+    d = decompose_saved_calls(_RECORD)
+    assert set(d) == set(SAVED_SOURCES)
+    assert d["saved_routing"] == 2            # planner_hint and heuristic both short-circuit
+    assert d["saved_kg_alias"] == 1           # retrieval_titles is not a credit
+    assert d["saved_verifier_gate"] == 1
+    assert d["saved_verifier_pointless"] == 1  # synthesizer_insufficient
+    assert d["saved_extraction"] == 2         # rungs 2 and 1; rung 4 spent a call
+    assert d["saved_planner_template"] == 0
+    assert d["saved_planner_ablation"] == 0
+
+
+def test_headline_configuration_counts_only_reachable_gates():
+    """heuristic_shortcut on, alias_match linker: router and linker are not calls.
+
+    Routing 2 and KG 1 are credits against LLM paths this configuration cannot
+    reach; the verifier gate (1) and the extraction rungs (2) replaced calls
+    that were reachable. The pointless skip is never a save.
+    """
+    reachable = reachable_llm_paths(_HEADLINE_CONFIG, config_name="agentic_full")
+    assert reachable == {
+        "router": False, "kg_linker": False, "verifier_llm": True,
+        "planner_llm": True, "extractor_llm": True,
+    }
+    assert count_saved_calls(decompose_saved_calls(_RECORD), reachable) == 3
+
+
+def test_a_configuration_with_a_reachable_router_and_linker_counts_them():
+    config = {
+        "agents": {
+            "retriever": {"heuristic_shortcut": False},
+            "kg": {"entity_linker": "alias_match", "llm_link_on_empty": True},
+            "verifier": {"enabled": True, "method": "nli_plus_llm"},
+        }
+    }
+    reachable = reachable_llm_paths(config, config_name="agentic_full")
+    assert reachable["router"] and reachable["kg_linker"]
+    assert count_saved_calls(decompose_saved_calls(_RECORD), reachable) == 6
+
+
+def test_nli_only_verifier_has_no_adjudication_to_save():
+    config = {"agents": {"verifier": {"enabled": True, "method": "nli"}}}
+    assert not reachable_llm_paths(config)["verifier_llm"]
+
+
+def test_no_planner_identity_plan_is_never_a_save():
+    record = {
+        "config_name": "agentic_no_planner",
+        "metrics": {"llm_calls_saved": 3, "cycles": 1, "replans": 1, "plan_depth": 1},
+        "plans": [{"revision": 0, "depth": 1}],
+        "steps": [
+            _step("planner", output={"origin": "fallback_rule", "ablation": "no_planner"}),
+            _step("retriever", output={"selector": "planner_hint", "rule_id": "R1_planner_hint"}),
+            _step("kg", output={"linked_by": "alias_match"}),
+            _step("verifier", inputs={"adjudication_skipped": "outside_uncertainty_band"}),
+            # The re-plan was T2b-discarded; the identity plan is always a duplicate.
+            _step("planner", output={"origin": "fallback_rule", "ablation": "no_planner"}, cycle=1),
+        ],
+    }
+    derived = derive_question_metrics(record, config=_HEADLINE_CONFIG)
+    assert derived["saved_planner_ablation"] == 2
+    assert derived["llm_calls_saved"] == 1          # the verifier gate only
+    assert derived["llm_calls_saved_recorded"] == 3
+    assert derived["replans_executed"] == 0
+    assert derived["replans_discarded"] == 1
+
+
+def test_selected_plan_depth_follows_best_cycle_not_the_latest_plan():
+    assert selected_plan_depth(_RECORD) == 3
+    latest_won = dict(_RECORD, best_cycle=1, metrics=dict(_RECORD["metrics"], best_cycle=1))
+    assert selected_plan_depth(latest_won) == 1
+
+
+def test_selected_plan_depth_falls_back_to_the_recorded_value_without_plans():
+    assert selected_plan_depth({"metrics": {"plan_depth": 2}}) == 2
+    assert selected_plan_depth({"metrics": {}}) is None
+
+
+def test_derived_metrics_keep_the_originals_beside_the_recomputed_values():
+    derived = derive_question_metrics(_RECORD, config=_HEADLINE_CONFIG)
+    assert derived["llm_calls_saved"] == 3
+    assert derived["llm_calls_saved_recorded"] == 4
+    assert derived["plan_depth"] == 3
+    assert derived["plan_depth_latest"] == 1
+    assert derived["cycles"] == 2 and derived["replans"] == 2
+    assert derived["replans_executed"] == 1
+    assert derived["replans_discarded"] == 1
+    assert derived["llm_calls"] == 3               # untouched
+
+
+def test_replan_executed_rate_excludes_discarded_replans():
+    records = [
+        {"replans": 1, "cycles": 2},                       # executed
+        {"replans": 1, "cycles": 1},                       # T2b-discarded
+        {"replans": 0, "cycles": 1},
+        {"replans": 2, "replans_executed": 0, "cycles": 1},  # derived field wins
+    ]
+    m = summarise_agent_metrics(records)
+    assert m.replan_rate == pytest.approx(0.75)
+    assert m.replan_executed_rate == pytest.approx(0.25)

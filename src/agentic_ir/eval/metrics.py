@@ -242,6 +242,239 @@ def retrieval_metrics_per_query(
 
 
 # ---------------------------------------------------------------------------
+# Trace-derived recomputation of the per-question ``metrics`` block
+# ---------------------------------------------------------------------------
+#
+# Three fields the orchestrator writes into ``metrics`` are re-derived here
+# from the step-level trace rather than trusted, because the value the agent
+# wrote does not match the definition the report gives for it. Doing it at
+# table time keeps the completed runs comparable: nothing an agent does
+# changes, only what is counted.
+#
+# ``llm_calls_saved``. ``Budget.note_saved`` is called by four agents, and two
+# of the four credit a call that the configuration in question cannot make.
+# The definition enforced here: a call is *saved* only when a deterministic
+# rule produced an output that, absent the rule, THIS configuration would
+# have obtained by an LLM call. Whether that LLM path is reachable is read
+# from the run's own config snapshot (``meta.json``), so the same trace can
+# be recounted under a different configuration without touching the agents.
+#
+# ``plan_depth``. ``QuestionState.metrics`` reports the depth of the *latest*
+# plan; ``docs/architecture.md`` section 6 defines the metric on the
+# *selected* plan (``best_cycle``). They diverge whenever a re-plan was
+# executed and the first cycle's answer won anyway.
+#
+# ``cycles`` / ``replans``. ``cycles`` is the number of plans that executed
+# and ``replans`` the number of re-plan directives the gate issued; a re-plan
+# the planner produced and T2b discarded as a near-duplicate is counted by
+# the second and not the first. Both are kept, and the discarded count is
+# made explicit so a reader can see which one a rate is built on.
+
+#: Per-question keys of the saved-call decomposition. The sum of the *counted*
+#: ones is ``llm_calls_saved``; every one of them is reported so a reader who
+#: prefers a different definition can apply it from the same table.
+SAVED_SOURCES: tuple[str, ...] = (
+    "saved_routing",            # retriever: heuristic table / planner hint
+    "saved_kg_alias",           # KG navigator: alias match found seeds
+    "saved_verifier_gate",      # verifier: confidence outside the uncertainty band
+    "saved_verifier_pointless", # verifier: skip for a reason that is not a gate
+    "saved_extraction",         # extractor: rung 1-3 answered before rung 4 (LLM)
+    "saved_planner_template",   # planner: comparison template instead of a decompose call
+    "saved_planner_ablation",   # NoPlanner (agentic_no_planner): identity plan
+)
+
+
+def _snapshot_get(config: Any, dotted: str, default: Any = None) -> Any:
+    """Dotted lookup that works on a ``Config`` and on the ``meta.json`` snapshot."""
+    if config is None:
+        return default
+    getter = getattr(config, "get", None)
+    if getter is not None and not isinstance(config, Mapping):
+        try:
+            return getter(dotted, default)
+        except Exception:  # noqa: BLE001 - a snapshot lookup must not fail a table
+            return default
+    node: Any = config
+    for part in dotted.split("."):
+        if not isinstance(node, Mapping) or part not in node:
+            return default
+        node = node[part]
+    return node
+
+
+def reachable_llm_paths(config: Any, *, config_name: str | None = None) -> dict[str, bool]:
+    """Which of the deterministic rules gate an LLM call this configuration can make.
+
+    * ``router``: ``RetrievalAgent._select`` only renders the routing prompt when
+      ``agents.retriever.heuristic_shortcut`` is false. With the shortcut on
+      the LLM router is unreachable for every sub-query, so a routing rule
+      replaces nothing.
+    * ``kg_linker``: ``KGNavigator._link`` tries the alias table first and
+      only falls through to ``_link_with_llm`` when ``entity_linker == "llm"``
+      or ``llm_link_on_empty`` is set. Under ``alias_match`` alone, the LLM
+      linker is a call that does not exist.
+    * ``verifier_llm``: the adjudication call exists when the verifier is
+      enabled and its method is not ``nli`` (``method_nli_only`` is a skip
+      reason, not a gate).
+    * ``planner_llm``: the decompose call exists unless the planner has been
+      replaced by the ``agentic_no_planner`` identity floor, in which case the
+      configuration has no LLM planner to save a call against.
+    * ``extractor_llm``: the rung-4 extraction call is unconditional in every
+      agentic configuration -- ``Orchestrator._extract_answer`` calls the
+      extractor agent whenever rungs 1-3 produced nothing.
+    """
+    shortcut = bool(_snapshot_get(config, "agents.retriever.heuristic_shortcut", True))
+    linker = str(_snapshot_get(config, "agents.kg.entity_linker", "alias_match"))
+    link_on_empty = bool(_snapshot_get(config, "agents.kg.llm_link_on_empty", False))
+    verifier_on = bool(_snapshot_get(config, "agents.verifier.enabled", True))
+    method = str(_snapshot_get(config, "agents.verifier.method", "nli_plus_llm"))
+    return {
+        "router": not shortcut,
+        "kg_linker": linker == "llm" or link_on_empty,
+        "verifier_llm": verifier_on and method != "nli",
+        "planner_llm": config_name != "agentic_no_planner",
+        "extractor_llm": True,
+    }
+
+
+def decompose_saved_calls(record: Mapping[str, Any]) -> dict[str, int]:
+    """Every ``note_saved`` credit in one trace record, attributed to its rule.
+
+    Read off the per-step ``output_summary`` / ``input_summary`` fields the
+    agents already write, which is what makes the recount possible without a
+    rerun: the retriever records ``selector``, the navigator ``linked_by``,
+    the verifier ``adjudication_skipped``, the planner ``origin`` and
+    ``ablation``, and the extractor its ``rung``. The extractor never calls
+    ``note_saved`` at all, so its rungs are the one source that was
+    *under*-counted rather than over-counted.
+    """
+    out = dict.fromkeys(SAVED_SOURCES, 0)
+    for step in record.get("steps") or ():
+        agent = step.get("agent")
+        output = step.get("output_summary") or {}
+        inputs = step.get("input_summary") or {}
+        if agent == "retriever":
+            # Mirrors ``_select``: a save is noted on every path that does not
+            # render the routing prompt, which the trace records as a selector
+            # other than the LLM's own two outcomes.
+            if output.get("selector") not in ("llm", "fallback", None):
+                out["saved_routing"] += 1
+        elif agent == "kg":
+            if output.get("linked_by") == "alias_match":
+                out["saved_kg_alias"] += 1
+        elif agent == "verifier":
+            skipped = inputs.get("adjudication_skipped")
+            if skipped == "outside_uncertainty_band":
+                out["saved_verifier_gate"] += 1
+            elif skipped is not None and skipped != "budget_exhausted":
+                # empty_answer, synthesizer_insufficient, method_nli_only: the
+                # agent credits these too, and none of them is a call the
+                # rule replaced -- a call that would have bought nothing.
+                out["saved_verifier_pointless"] += 1
+        elif agent == "extractor":
+            rung = output.get("rung")
+            if rung in (1, 2, 3):
+                out["saved_extraction"] += 1
+        elif agent == "planner":
+            if output.get("ablation") == "no_planner":
+                out["saved_planner_ablation"] += 1
+            elif output.get("origin") == "template_shortcut":
+                out["saved_planner_template"] += 1
+    return out
+
+
+def count_saved_calls(
+    decomposition: Mapping[str, int], reachable: Mapping[str, bool]
+) -> int:
+    """The honest ``llm_calls_saved``: only rules that gate a reachable LLM call.
+
+    ``saved_verifier_pointless`` is never counted: an adjudication of an empty
+    or already-insufficient answer is not a call the rule replaced, it is a
+    call nobody would make. ``saved_planner_ablation`` is never counted
+    either: an ablation that removes the planner has no LLM planner to save
+    a call against, and the saving it is entitled to is already visible in
+    its lower ``llm_calls``.
+    """
+    total = 0
+    if reachable.get("router"):
+        total += int(decomposition.get("saved_routing", 0))
+    if reachable.get("kg_linker"):
+        total += int(decomposition.get("saved_kg_alias", 0))
+    if reachable.get("verifier_llm"):
+        total += int(decomposition.get("saved_verifier_gate", 0))
+    if reachable.get("extractor_llm", True):
+        total += int(decomposition.get("saved_extraction", 0))
+    if reachable.get("planner_llm", True):
+        total += int(decomposition.get("saved_planner_template", 0))
+    return total
+
+
+def selected_plan_depth(record: Mapping[str, Any]) -> int | None:
+    """Depth of the plan whose cycle produced the selected answer.
+
+    ``plans`` in the trace are the executed plans in revision order and
+    ``best_cycle`` is the cycle FINALIZE picked (argmax confidence over all
+    cycles). A T2b-discarded re-plan is never appended, so the list is indexed
+    by revision. Falls back to the latest plan when the record carries no
+    ``best_cycle``, which is the definition the orchestrator wrote.
+    """
+    plans = record.get("plans") or []
+    if not plans:
+        metrics = record.get("metrics") or {}
+        value = metrics.get("plan_depth")
+        return int(value) if value is not None else None
+    best = record.get("best_cycle")
+    if best is None:
+        best = (record.get("metrics") or {}).get("best_cycle")
+    chosen = None
+    if best is not None:
+        for plan in plans:
+            if plan.get("revision") == best:
+                chosen = plan
+                break
+    if chosen is None:
+        chosen = plans[-1]
+    depth = chosen.get("depth")
+    return int(depth) if depth is not None else None
+
+
+def derive_question_metrics(
+    record: Mapping[str, Any],
+    *,
+    config: Any = None,
+    config_name: str | None = None,
+) -> dict[str, Any]:
+    """The ``metrics`` block of one record, with the recomputed fields on top.
+
+    Everything the orchestrator wrote is kept; the recomputed value replaces
+    the headline key and the original is retained under ``*_recorded`` /
+    ``*_latest`` so the two definitions can be printed side by side.
+    """
+    metrics = dict(record.get("metrics") or {})
+    name = config_name or record.get("config_name")
+    decomposition = decompose_saved_calls(record)
+    reachable = reachable_llm_paths(config, config_name=name)
+
+    metrics["llm_calls_saved_recorded"] = metrics.get("llm_calls_saved", 0) or 0
+    metrics.update(decomposition)
+    metrics["llm_calls_saved"] = count_saved_calls(decomposition, reachable)
+
+    if "plan_depth" in metrics:
+        metrics["plan_depth_latest"] = metrics.get("plan_depth")
+    depth = selected_plan_depth(record)
+    if depth is not None:
+        metrics["plan_depth"] = depth
+
+    cycles = metrics.get("cycles")
+    replans = metrics.get("replans")
+    if cycles is not None and replans is not None:
+        executed = max(0, int(cycles) - 1)
+        metrics["replans_executed"] = executed
+        metrics["replans_discarded"] = max(0, int(replans) - executed)
+    return metrics
+
+
+# ---------------------------------------------------------------------------
 # Agent-specific metrics
 # ---------------------------------------------------------------------------
 
@@ -268,6 +501,19 @@ class AgentMetrics:
     citation_grounding: float = 0.0
     degraded_steps: float = 0.0
     budget_exhausted_rate: float = 0.0
+    # Recomputed-at-table-time companions (see ``derive_question_metrics``).
+    llm_calls_saved_recorded: float = 0.0
+    saved_routing: float = 0.0
+    saved_kg_alias: float = 0.0
+    saved_verifier_gate: float = 0.0
+    saved_verifier_pointless: float = 0.0
+    saved_extraction: float = 0.0
+    saved_planner_template: float = 0.0
+    saved_planner_ablation: float = 0.0
+    plan_depth_latest: float = 0.0
+    replans_executed: float = 0.0
+    replans_discarded: float = 0.0
+    replan_executed_rate: float = 0.0
     extra: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, float]:
@@ -287,6 +533,18 @@ class AgentMetrics:
             "citation_grounding": self.citation_grounding,
             "degraded_steps": self.degraded_steps,
             "budget_exhausted_rate": self.budget_exhausted_rate,
+            "llm_calls_saved_recorded": self.llm_calls_saved_recorded,
+            "saved_routing": self.saved_routing,
+            "saved_kg_alias": self.saved_kg_alias,
+            "saved_verifier_gate": self.saved_verifier_gate,
+            "saved_verifier_pointless": self.saved_verifier_pointless,
+            "saved_extraction": self.saved_extraction,
+            "saved_planner_template": self.saved_planner_template,
+            "saved_planner_ablation": self.saved_planner_ablation,
+            "plan_depth_latest": self.plan_depth_latest,
+            "replans_executed": self.replans_executed,
+            "replans_discarded": self.replans_discarded,
+            "replan_executed_rate": self.replan_executed_rate,
         }
         d.update(self.extra)
         return d
@@ -296,7 +554,25 @@ _MEAN_FIELDS = (
     "llm_calls", "llm_calls_saved", "llm_cache_hits", "tool_calls",
     "parse_failures", "latency_s", "plan_depth", "n_subqueries",
     "cycles", "replans", "degraded_steps",
+    "llm_calls_saved_recorded", *SAVED_SOURCES, "plan_depth_latest",
+    "replans_executed", "replans_discarded",
 )
+
+
+def _replans_executed(record: Mapping[str, Any]) -> float:
+    """Re-plans that produced a cycle: the derived field, else ``cycles - 1``.
+
+    A raw ``metrics`` block that has not been through
+    :func:`derive_question_metrics` still carries ``cycles``; a block with
+    neither falls back to ``replans`` so an older trace is not read as zero.
+    """
+    value = record.get("replans_executed")
+    if value is not None:
+        return float(value)
+    cycles = record.get("cycles")
+    if cycles is not None:
+        return max(0.0, float(cycles) - 1.0)
+    return float(record.get("replans", 0) or 0)
 
 
 def summarise_agent_metrics(records: Sequence[Mapping[str, Any]]) -> AgentMetrics:
@@ -306,7 +582,9 @@ def summarise_agent_metrics(records: Sequence[Mapping[str, Any]]) -> AgentMetric
 
     * ``replan_rate`` is the FRACTION OF QUESTIONS that triggered at least one
       re-plan -- not the mean number of re-plans. Both are reported;
-      ``replans`` carries the mean count.
+      ``replans`` carries the mean count. ``replan_executed_rate`` is the
+      fraction on which a re-planned cycle actually ran: a re-plan T2b
+      discarded as a near-duplicate is triggered but never executed.
     * ``citation_grounding`` is averaged only over questions that produced a
       non-empty answer. Including empty answers as zeros would conflate "cited
       badly" with "did not answer", which are different failures.
@@ -320,6 +598,7 @@ def summarise_agent_metrics(records: Sequence[Mapping[str, Any]]) -> AgentMetric
         setattr(m, fld, sum(float(r.get(fld, 0) or 0) for r in records) / n)
 
     m.replan_rate = sum(1 for r in records if float(r.get("replans", 0) or 0) > 0) / n
+    m.replan_executed_rate = sum(1 for r in records if _replans_executed(r) > 0) / n
     m.budget_exhausted_rate = sum(1 for r in records if r.get("budget_exhausted")) / n
 
     grounded = [
@@ -337,4 +616,6 @@ __all__ = [
     "rankings_to_run", "qrels_to_dict",
     "retrieval_metrics", "retrieval_metrics_per_query", "DEFAULT_K_VALUES",
     "AgentMetrics", "summarise_agent_metrics",
+    "SAVED_SOURCES", "reachable_llm_paths", "decompose_saved_calls",
+    "count_saved_calls", "selected_plan_depth", "derive_question_metrics",
 ]

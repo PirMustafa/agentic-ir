@@ -79,8 +79,20 @@ from ..trace import iter_records
 from ..types import GoldAnswer
 from .bootstrap import BootstrapResult, ComparisonResult, bootstrap_mean, paired_bootstrap
 from .error_analysis import ERROR_LABELS, ErrorSummary, analyse, summarise
-from .metrics import AgentMetrics, summarise_agent_metrics
-from .run_eval import AGENTIC_CONFIGS, configurations, runs_root, score_records
+from .metrics import (
+    AgentMetrics,
+    derive_question_metrics,
+    reachable_llm_paths,
+    summarise_agent_metrics,
+)
+from .run_eval import (
+    AGENTIC_CONFIGS,
+    config_for,
+    configurations,
+    resolved_citations,
+    runs_root,
+    score_records,
+)
 
 __all__ = [
     "ABLATION_REFERENCE",
@@ -369,6 +381,11 @@ class RunData:
     records: list[dict[str, Any]] = field(default_factory=list)
     scores: dict[str, dict[str, float]] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+    #: The configuration the run executed under -- ``meta.json``'s snapshot
+    #: when it has one, the project config with the ablation overrides
+    #: otherwise. It decides which LLM calls were *reachable*, which is what
+    #: the saved-call recount needs.
+    config_snapshot: Any = None
 
     @property
     def n_questions(self) -> int:
@@ -416,10 +433,22 @@ class RunData:
             if not citations:
                 continue
             cited += 1
-            ids = {e.get("evidence_id") for e in (record.get("evidence") or ())}
-            if citations & ids:
+            if resolved_citations(record):
                 return False
         return cited > 0
+
+    @property
+    def sp_protocol(self) -> str:
+        """``"cited"`` or ``"pool"``: which supporting-fact protocol scored this run.
+
+        ``predicted_supporting_facts`` scores the cited subset when a record's
+        citations resolve to its evidence and the whole evidence pool
+        otherwise. A run is ``cited`` when any of its records resolved; a run
+        that never cited, or cited in an unusable namespace, is ``pool``. The
+        two are different measurements -- roughly two sentences against
+        seven -- and a paired test between them is not a test of the systems.
+        """
+        return "cited" if any(resolved_citations(r) for r in self.records) else "pool"
 
     def metric(self, name: str) -> dict[str, float]:
         """``{qid: value}`` for one metric -- the shape both bootstraps want."""
@@ -434,20 +463,38 @@ class RunData:
         values = list(self.metric(name).values())
         return sum(values) / len(values) if values else None
 
+    def question_metrics(self) -> list[dict[str, Any]]:
+        """The per-question ``metrics`` blocks, recomputed from the step trace.
+
+        ``derive_question_metrics`` replaces ``llm_calls_saved`` with the
+        count of calls a rule replaced *in this configuration*, ``plan_depth``
+        with the selected plan's depth, and adds the decomposition and the
+        recorded originals beside them. The trace itself is never rewritten.
+        """
+        return [
+            derive_question_metrics(
+                record, config=self.config_snapshot, config_name=self.config_name
+            )
+            for record in self.records
+        ]
+
     def agent_metrics(self) -> AgentMetrics:
-        """Aggregate of the per-question ``metrics`` blocks in the trace."""
-        return summarise_agent_metrics([r.get("metrics") or {} for r in self.records])
+        """Aggregate of the recomputed per-question ``metrics`` blocks."""
+        return summarise_agent_metrics(self.question_metrics())
+
+    def reachable(self) -> dict[str, bool]:
+        """Which deterministic rules gate an LLM call this run could have made."""
+        return reachable_llm_paths(self.config_snapshot, config_name=self.config_name)
 
     def series(self, name: str) -> list[tuple[str, float]]:
-        """``(qid, value)`` for one field of the per-question ``metrics`` block.
+        """``(qid, value)`` for one field of the recomputed per-question metrics.
 
         The per-question values, not the aggregate: a summary statistic that is
         robust to an outlier cannot be recovered from a mean that has already
         absorbed it.
         """
         out: list[tuple[str, float]] = []
-        for record in self.records:
-            metrics = record.get("metrics") or {}
+        for record, metrics in zip(self.records, self.question_metrics()):
             value = metrics.get(name)
             if value is None:
                 continue
@@ -493,6 +540,12 @@ def load_run(run_dir: Path, *, golds: Mapping[str, GoldAnswer], cfg: Config) -> 
         dataset = dataset or str(records[0].get("dataset") or "")
 
     scores = score_records(records, golds, cfg=cfg) if (records and golds) else {}
+    snapshot: Any = meta.get("config")
+    if not isinstance(snapshot, Mapping) or not snapshot:
+        try:
+            snapshot = config_for(config_name, cfg).raw
+        except Exception:  # noqa: BLE001 - no snapshot means defaults, not a crash
+            snapshot = None
     return RunData(
         config_name=config_name,
         dataset=dataset,
@@ -501,6 +554,7 @@ def load_run(run_dir: Path, *, golds: Mapping[str, GoldAnswer], cfg: Config) -> 
         records=records,
         scores=scores,
         meta=meta,
+        config_snapshot=snapshot,
     )
 
 
@@ -822,6 +876,41 @@ def _artefact_note(runs: Mapping[str, RunData], *, config_names: Sequence[str]) 
     )
 
 
+def _sp_protocol_note(runs: Mapping[str, RunData], *, config_names: Sequence[str]) -> str:
+    """One sentence saying which rows were scored on what, and what that forbids.
+
+    The cited-subset and whole-pool protocols are both legitimate and neither
+    is the other: the first measures what a system stands behind, the second
+    what it retrieved. What is not legitimate is a significance mark between
+    them, so the sentence names the rows under each protocol, gives the mean
+    size of the set each was scored on, and says that the marks are withheld
+    across the boundary and kept on the one column that is the same protocol
+    for every row.
+    """
+    cited = [n for n in config_names if (r := runs.get(n)) is not None and r.sp_protocol == "cited"]
+    pooled = [n for n in config_names if (r := runs.get(n)) is not None and r.sp_protocol == "pool"]
+    if not cited or not pooled:
+        return ""
+
+    def mean_size(names: Sequence[str]) -> str:
+        values = [v for n in names for v in runs[n].metric("sp_n_predicted").values()]
+        return fmt(sum(values) / len(values), 1) if values else MISSING
+
+    return (
+        r"\textbf{SP-EM, SP-P, SP-R and SP-F1 are not one protocol}: "
+        f"{_names(cited)} {'is' if len(cited) == 1 else 'are'} scored on the sentences "
+        f"{'it' if len(cited) == 1 else 'they'} actually cited (mean {mean_size(cited)} "
+        f"sentences per question), whereas {_names(pooled)} "
+        f"{'is' if len(pooled) == 1 else 'are'} scored on {'its' if len(pooled) == 1 else 'their'} "
+        f"whole evidence pool (mean {mean_size(pooled)}) because "
+        f"{'it emits' if len(pooled) == 1 else 'they emit'} no citation that resolves to "
+        "that evidence, so a single SP-F1 is not comparable across the two groups and no "
+        "significance mark is placed between rows of different protocol; "
+        r"\textit{Pool SP-R} is the recall of the whole evidence pool for every row alike "
+        "and is the one supporting-fact column compared like for like."
+    )
+
+
 # ---------------------------------------------------------------------------
 # main_results.tex
 # ---------------------------------------------------------------------------
@@ -854,18 +943,45 @@ def main_results_tables(
     support_comparisons = _compare_all(
         runs,
         reference=REFERENCE_CONFIG,
-        metrics=("sp_f1", "recall@10", "ndcg@10"),
+        metrics=(
+            "sp_f1", "sp_precision", "sp_recall", "sp_pool_recall",
+            "recall@10", "ndcg@10",
+        ),
         samples=samples,
         seed=seed,
         expected=expected,
     )
     answer_note = _significance_note(answer_comparisons, what="EM and F1 columns")
     support_note = _significance_note(
-        support_comparisons, what="SP-F1 column", legend=False
+        support_comparisons, what="supporting-fact columns", legend=False
     )
     retrieval_note = _significance_note(support_comparisons, what="retrieval columns")
     partial_note = _partial_note(runs, config_names=config_names, expected=expected)
     artefact_note = _artefact_note(runs, config_names=config_names)
+    protocol_note = _sp_protocol_note(runs, config_names=config_names)
+    reference_run = runs.get(REFERENCE_CONFIG)
+
+    def sp_mark(run: RunData | None, name: str, metric: str, *, like_for_like: bool) -> str:
+        """A supporting-fact cell, marked only against a like-for-like reference.
+
+        The bootstrap will happily pair a cited-subset score with a whole-pool
+        score; the interval it returns is then a statement about the two
+        protocols, not about the two systems. Marks are withheld whenever the
+        row and the reference were scored under different protocols, and kept
+        for the one column (``sp_pool_recall``) that is the same protocol for
+        every row.
+        """
+        comparison = support_comparisons.get(name, metric)
+        if (
+            not like_for_like
+            and run is not None
+            and reference_run is not None
+            and run.sp_protocol != reference_run.sp_protocol
+        ):
+            comparison = None
+        return mark(
+            run.mean(metric) if run else None, comparison, reference=(name == REFERENCE_CONFIG)
+        )
 
     def interval(run: RunData | None, metric: str) -> BootstrapResult | None:
         if run is None:
@@ -882,10 +998,10 @@ def main_results_tables(
             partial = _is_partial(run, expected)
             artefact = run is not None and run.citations_unresolved
             is_answer_ref = answers and name == answer_ref
-            is_support_ref = name == REFERENCE_CONFIG
             n_cell = MISSING if run is None else fmt_int(run.n_questions)
             if partial:
                 n_cell = _flagged(n_cell, PARTIAL_MARK)
+            flag = ARTEFACT_MARK if artefact else ""
             rows.append([
                 _tt(name),
                 n_cell,
@@ -894,30 +1010,29 @@ def main_results_tables(
                 mark(run.mean("f1") if answers else None,
                      answer_comparisons.get(name, "f1"), reference=is_answer_ref),
                 fmt_ci(interval(run, _CI_METRIC)) if answers else MISSING,
-                _flagged(fmt(run.mean("sp_em") if run else None),
-                         ARTEFACT_MARK if artefact else ""),
-                _flagged(
-                    mark(run.mean("sp_f1") if run else None,
-                         support_comparisons.get(name, "sp_f1"), reference=is_support_ref),
-                    ARTEFACT_MARK if artefact else "",
-                ),
+                _flagged(fmt(run.mean("sp_em") if run else None), flag),
+                _flagged(sp_mark(run, name, "sp_precision", like_for_like=False), flag),
+                _flagged(sp_mark(run, name, "sp_recall", like_for_like=False), flag),
+                _flagged(sp_mark(run, name, "sp_f1", like_for_like=False), flag),
+                sp_mark(run, name, "sp_pool_recall", like_for_like=True),
                 MISSING if is_answer_ref else fmt_delta(answer_comparisons.get(name, "f1")),
             ])
         answer_groups.append((title, rows))
 
     answer = table(
-        colspec="lrrrcrrr",
+        colspec="lrrrcrrrrrr",
         header=_header(
-            "System", "$n$", "EM", "F1", r"F1 95\% CI", "SP-EM", "SP-F1",
-            r"$\Delta$F1 vs.\ ref.\ [95\% CI]",
+            "System", "$n$", "EM", "F1", r"F1 95\% CI", "SP-EM", "SP-P", "SP-R", "SP-F1",
+            "Pool SP-R", r"$\Delta$F1 vs.\ ref.\ [95\% CI]",
         ),
         groups=answer_groups,
         caption=(
             f"Answer quality on {_tt(dataset)}. Exact match and token-level F1 follow the "
             "official HotpotQA evaluation script, including its yes/no short circuit; "
-            r"SP-EM and SP-F1 are set metrics over $(\textit{title}, \textit{sent\_id})$ "
-            f"supporting-fact pairs. $n$ is the number of questions scored. "
-            f"{answer_note} {support_note} {_unrun_note()}"
+            r"SP-EM, SP-P, SP-R and SP-F1 are set metrics over "
+            r"$(\textit{title}, \textit{sent\_id})$ supporting-fact pairs. "
+            f"$n$ is the number of questions scored. "
+            f"{answer_note} {support_note} {protocol_note} {_unrun_note()}"
             + _no_answer_note(runs, config_names=config_names, columns="EM, F1 and $\\Delta$F1")
             + partial_note
             + artefact_note
@@ -1001,12 +1116,15 @@ def agent_metrics_table(
     groups: list[tuple[str | None, Sequence[Sequence[str]]]] = []
     warm: list[str] = []
     hangs: list[str] = []
+    saved_breakdown: list[str] = []
+    depth_notes: list[str] = []
+    discard_notes: list[str] = []
     for title, names in _grouped(config_names):
         rows: list[list[str]] = []
         for name in names:
             run = runs.get(name)
             if run is None:
-                rows.append([_tt(name)] + [MISSING] * 9)
+                rows.append([_tt(name)] + [MISSING] * 10)
                 continue
             if not bool(run.meta.get("cache_cold", True)):
                 warm.append(name)
@@ -1017,6 +1135,21 @@ def agent_metrics_table(
                     f"{_tt(name)} ({fmt(worst[1], 1)}\\,s on "
                     f"{_tt(worst[0])}, {_hours(worst[1])})"
                 )
+            if name in AGENTIC_CONFIGS:
+                saved_breakdown.append(_saved_breakdown(name, run, m))
+                if abs(m.plan_depth - m.plan_depth_latest) >= 0.0005:
+                    depth_notes.append(
+                        f"{_tt(name)} {fmt(m.plan_depth, 2)} selected against "
+                        f"{fmt(m.plan_depth_latest, 2)} latest"
+                    )
+                discarded = sum(
+                    1 for q in run.question_metrics() if float(q.get("replans_discarded", 0) or 0) > 0
+                )
+                if discarded:
+                    discard_notes.append(
+                        f"{_tt(name)} ({discarded} of {run.n_questions} questions, "
+                        f"executed rate {fmt(m.replan_executed_rate, 3)})"
+                    )
             rows.append([
                 _flagged(_tt(name), PARTIAL_MARK if _is_partial(run, expected) else ""),
                 fmt(m.llm_calls, 2),
@@ -1027,6 +1160,7 @@ def agent_metrics_table(
                 fmt(m.plan_depth, 2),
                 fmt(m.n_subqueries, 2),
                 fmt(m.replan_rate, 3),
+                fmt(m.replan_executed_rate, 3),
                 fmt(m.citation_grounding, 3),
             ])
         groups.append((title, rows))
@@ -1050,20 +1184,61 @@ def agent_metrics_table(
             "such a run is that single question divided by $n$ and describes nothing "
             r"that happens per question. See \texttt{docs/report-audit.md}."
         )
+    saved_note = ""
+    if saved_breakdown:
+        saved_note = (
+            r" \textbf{\textit{Saved} is recomputed from the step trace under one "
+            r"definition}: a call is saved only when a deterministic rule produced an "
+            "output that, absent the rule, this configuration would have obtained by an "
+            "LLM call. The agents' own counter credits every rule that fired; two of "
+            r"those rules stand in for calls this configuration cannot make -- with "
+            r"\texttt{heuristic\_shortcut: true} the LLM router is unreachable for every "
+            r"sub-query, and with \texttt{entity\_linker: alias\_match} there is no LLM "
+            "entity linker to skip -- and the identity plan of the no-planner ablation is "
+            "the ablation itself, not a rule gating a planner call. A verifier skip for "
+            "an empty or already-insufficient answer is a call nobody would make, not one "
+            "replaced. The extraction ladder, which replaces a real rung-4 LLM call on "
+            "every rung-1 to rung-3 success, never incremented the counter at all. "
+            "Per-question decomposition, counted terms in bold, so any other definition "
+            "can be applied from the same numbers: " + "; ".join(saved_breakdown) + "."
+        )
+    depth_note = (
+        r" \textit{Plan depth} is the depth of the \textit{selected} plan (the cycle "
+        r"FINALIZE chose, \texttt{best\_cycle}), as \texttt{docs/architecture.md} "
+        r"\S6 defines it; the orchestrator's own metrics block records the "
+        r"\textit{latest} plan's depth and the two differ wherever a re-plan executed "
+        "and the first cycle's answer was kept"
+        + (f" ({', '.join(depth_notes)})" if depth_notes else "")
+        + "."
+    )
+    replan_note = (
+        r" \textit{Re-plan rate} is the fraction of questions on which the verifier "
+        r"triggered at least one re-plan (\textit{trig.}) and the fraction on which a "
+        r"re-planned cycle actually executed (\textit{exec.}); the two differ when the "
+        "planner's re-plan was a near-duplicate of a plan already run and transition T2b "
+        "discarded it, which the trace counts as a re-plan but not as a cycle"
+        + (
+            ". Questions with a discarded re-plan: " + ", ".join(discard_notes)
+            if discard_notes
+            else ""
+        )
+        + "."
+    )
     return table(
-        colspec="lrrrrrrrrr",
+        colspec="lrrrrrrrrrr",
         header=_header(
             "System", "LLM calls", "Saved", "Tool calls", "Latency (s) med.",
-            "Latency (s) max", "Plan depth", "Sub-queries", "Re-plan rate",
-            "Cite grounding",
+            "Latency (s) max", "Plan depth", "Sub-queries", "Re-plan rate (trig.)",
+            "Re-plan rate (exec.)", "Cite grounding",
         ),
         groups=groups,
         caption=(
             f"Agent-specific cost on {_tt(dataset)}, per question. "
             r"\textit{LLM calls} counts logical calls, cache hits included; "
-            r"\textit{Saved} counts calls a deterministic rule replaced; "
-            r"\textit{Re-plan rate} is the fraction of questions that triggered at least "
-            r"one re-plan, not the mean count; \textit{Cite grounding} is averaged only "
+            r"\textit{Saved} counts calls a deterministic rule replaced, under the "
+            "definition stated below; "
+            r"\textit{Re-plan rate} is a fraction of questions, not a mean count; "
+            r"\textit{Cite grounding} is averaged only "
             "over questions that produced a non-empty answer, so it cannot be inflated by "
             r"abstentions. \textbf{Latency is the median per question, with the maximum "
             r"beside it}, and every other column is a mean: latency is the one unbounded "
@@ -1073,11 +1248,43 @@ def agent_metrics_table(
             "comparable between cold-cache runs."
             + caveat
             + hang_note
+            + saved_note
+            + depth_note
+            + replan_note
             + f" {_unrun_note()}"
             + _partial_note(runs, config_names=config_names, expected=expected)
         ),
         label=f"tab:agent-metrics-{dataset}",
     )
+
+
+def _saved_breakdown(name: str, run: RunData, m: AgentMetrics) -> str:
+    """``agentic_full: routing 3.31, KG alias 2.54, verifier gate 1.21, ...``.
+
+    Every term the agents credited, per question, with the ones that count
+    under this configuration in bold and the agents' own total in brackets.
+    A reader who wants to count routing as a save can add it back; a reader
+    who wants to drop extraction can take it out. Nothing is hidden in the
+    single number.
+    """
+    reachable = run.reachable()
+    terms: list[tuple[str, float, bool]] = [
+        ("routing", m.saved_routing, reachable["router"]),
+        ("KG alias", m.saved_kg_alias, reachable["kg_linker"]),
+        ("verifier gate", m.saved_verifier_gate, reachable["verifier_llm"]),
+        ("verifier pointless", m.saved_verifier_pointless, False),
+        ("extraction", m.saved_extraction, reachable["extractor_llm"]),
+        ("planner template", m.saved_planner_template, reachable["planner_llm"]),
+        ("planner ablation", m.saved_planner_ablation, False),
+    ]
+    parts = []
+    for label, value, counted in terms:
+        if value <= 0:
+            continue
+        cell = f"{label} {fmt(value, 2)}"
+        parts.append(r"\textbf{" + cell + "}" if counted else cell)
+    body = ", ".join(parts) if parts else "none"
+    return f"{_tt(name)}: {body} (agents recorded {fmt(m.llm_calls_saved_recorded, 2)})"
 
 
 # ---------------------------------------------------------------------------

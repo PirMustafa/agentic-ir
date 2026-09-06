@@ -50,7 +50,7 @@ from ..indexing.corpus import Corpus, eval_set_path, load_eval_set, make_doc_id
 from ..state import QuestionState
 from ..trace import TraceWriter, iter_records, make_run_id
 from ..types import GoldAnswer
-from .metrics import retrieval_metrics_per_query, score_question
+from .metrics import retrieval_metrics_per_query, score_question, supporting_fact_scores
 
 __all__ = [
     "ABLATION_OVERRIDES",
@@ -69,8 +69,11 @@ __all__ = [
     "load_baseline",
     "load_pipeline",
     "main",
+    "pool_supporting_facts",
     "predicted_supporting_facts",
+    "preflight_or_abort",
     "question_ranking",
+    "resolved_citations",
     "run_eval",
     "score_records",
     "seed_everything",
@@ -815,6 +818,52 @@ def _completed_qids(path: Path, *, retry_failed: bool) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+
+def uses_verifier(config_name: str, cfg: Config) -> bool:
+    """Whether a run of ``config_name`` will construct a :class:`Verifier`.
+
+    Mirrors the condition in :func:`build_system` exactly, so the preflight
+    covers precisely the runs whose numbers the NLI encoder can silently
+    corrupt and no others.
+    """
+    return config_name in AGENTIC_CONFIGS and bool(cfg.get("agents.verifier.enabled", True))
+
+
+def preflight_or_abort(config_name: str, cfg: Config) -> str | None:
+    """Load the NLI encoder before the first question, or refuse to start.
+
+    ``verifier.preflight_nli`` explains the failure mode: a silently degraded
+    NLI falls back to token containment, which scores 1.000 where DeBERTa
+    scores 0.0008, pushes nearly every candidate over the accept threshold,
+    and switches the re-plan loop -- the thing this project measures -- off
+    for the whole run while every number still looks plausible. The
+    orchestrator's no-raise contract is right for one question and wrong for
+    250 of them, so this is the one place the harness aborts on purpose.
+
+    Returns the preflight's message when the run may proceed, ``None`` when
+    the configuration has no verifier and the check does not apply. Raises
+    ``SystemExit`` -- not a warning, not a log line -- when the encoder is
+    unavailable or mis-labelled.
+    """
+    if not uses_verifier(config_name, cfg):
+        return None
+    from ..agents.verifier import preflight_nli
+
+    ok, message = preflight_nli(cfg)
+    if not ok:
+        raise SystemExit(
+            f"NLI preflight FAILED for {config_name!r}: {message}\n"
+            "Refusing to start: a degraded verifier scores nearly every answer as "
+            "supported, so the run would complete with plausible-looking numbers "
+            "that measure the fallback rather than the system. Fix the NLI model "
+            "(agents.verifier.nli_model / nli_device) and re-run."
+        )
+    return message
+
+
+# ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
 
@@ -837,6 +886,14 @@ def run_eval(
     base_cfg = cfg or load_config()
     run_cfg = config_for(spec.config_name, base_cfg)
     seeding = seed_everything(spec.seed)
+
+    # Before anything expensive, and only for a system this harness builds
+    # itself: an injected ``system`` is a test double with no verifier to
+    # check, and loading the encoder for it would only slow the test down.
+    if system is None:
+        verdict = preflight_or_abort(spec.config_name, run_cfg)
+        if verdict is not None and progress:
+            print(f"preflight: {verdict}")
 
     golds = tuple(load_eval_set(spec.dataset, split=spec.split, size=spec.size, cfg=run_cfg))
     if spec.limit is not None:
@@ -1099,6 +1156,45 @@ def gold_doc_ids(gold: GoldAnswer | Mapping[str, Any], dataset: str) -> list[str
     return out
 
 
+def _facts_of(pool: Iterable[Mapping[str, Any]]) -> list[tuple[str, int]]:
+    facts: list[tuple[str, int]] = []
+    for item in pool:
+        title, sent_id = item.get("title"), item.get("sent_id")
+        if title is None or sent_id is None:
+            continue
+        pair = (str(title), int(sent_id))
+        if pair not in facts:
+            facts.append(pair)
+    return facts
+
+
+def resolved_citations(record: Mapping[str, Any]) -> set[str]:
+    """The citations that name evidence the same record actually holds.
+
+    Empty both when a system cited nothing and when it cited in a namespace
+    its evidence does not use (``p1`` against ``e1..en``). Which of the two
+    protocols :func:`predicted_supporting_facts` scores a record under is
+    exactly whether this set is non-empty, so it is exposed for the tables to
+    decide what is comparable with what.
+    """
+    evidence = record.get("evidence") or []
+    known = {e.get("evidence_id") for e in evidence}
+    return set(record.get("citations") or ()) & known
+
+
+def pool_supporting_facts(record: Mapping[str, Any]) -> list[tuple[str, int]]:
+    """The ``(title, sent_id)`` pairs of the WHOLE evidence pool, citations ignored.
+
+    The same quantity for every system, whether or not its citations resolve:
+    the one supporting-fact protocol under which an agentic run and a baseline
+    are measured the same way. Reported beside the cited-subset scores, not
+    instead of them -- a system that cites two sentences out of twenty has
+    done something the pool score cannot see, and the pool score has a recall
+    that the cited score cannot see.
+    """
+    return _facts_of(record.get("evidence") or [])
+
+
 def predicted_supporting_facts(record: Mapping[str, Any]) -> list[tuple[str, int]]:
     """The ``(title, sent_id)`` pairs the system stands behind.
 
@@ -1124,18 +1220,9 @@ def predicted_supporting_facts(record: Mapping[str, Any]) -> list[tuple[str, int
     one set intersection and removes a whole class of silent, publishable error.
     """
     evidence = record.get("evidence") or []
-    known = {e.get("evidence_id") for e in evidence}
-    cited = set(record.get("citations") or ()) & known
+    cited = resolved_citations(record)
     pool = [e for e in evidence if e.get("evidence_id") in cited] if cited else list(evidence)
-    facts: list[tuple[str, int]] = []
-    for item in pool:
-        title, sent_id = item.get("title"), item.get("sent_id")
-        if title is None or sent_id is None:
-            continue
-        pair = (str(title), int(sent_id))
-        if pair not in facts:
-            facts.append(pair)
-    return facts
+    return _facts_of(pool)
 
 
 def score_records(
@@ -1163,18 +1250,27 @@ def score_records(
         if gold is None:
             continue
         dataset = str(record.get("dataset") or gold.dataset)
+        predicted = predicted_supporting_facts(record)
         scores = score_question(
             str(record.get("final_answer") or ""),
             gold.answer,
-            predicted_supporting_facts(record),
+            predicted,
             gold.supporting_facts,
         )
+        # The whole-pool protocol, for every record: the only supporting-fact
+        # score under which a run whose citations resolve and one whose
+        # citations do not are measured the same way. See ``pool_supporting_facts``.
+        pool = pool_supporting_facts(record)
+        _pool_em, pool_p, pool_r, pool_f1 = supporting_fact_scores(pool, gold.supporting_facts)
         row = {
             "em": scores.em, "f1": scores.f1,
             "precision": scores.precision, "recall": scores.recall,
             "sp_em": scores.sp_em, "sp_f1": scores.sp_f1,
             "sp_precision": scores.sp_precision, "sp_recall": scores.sp_recall,
             "joint_em": scores.joint_em, "joint_f1": scores.joint_f1,
+            "sp_pool_precision": pool_p, "sp_pool_recall": pool_r, "sp_pool_f1": pool_f1,
+            "sp_n_predicted": float(len(predicted)), "sp_n_pool": float(len(pool)),
+            "sp_cited": 1.0 if resolved_citations(record) else 0.0,
         }
         out[qid] = row
         ranking = question_ranking(record, rrf_k=rrf_k)

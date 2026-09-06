@@ -454,9 +454,13 @@ def test_the_chapters_input_exactly_the_files_this_module_writes():
         for match in re.finditer(r"\\input\{([^}]*results/tables/[^}]*)\}",
                                  tex.read_text(encoding="utf-8")):
             referenced.add(Path(match.group(1)).name)
-    assert referenced <= set(tables.TABLE_FILES), (
-        f"report/ inputs fragments tables.py does not write: "
-        f"{sorted(referenced - set(tables.TABLE_FILES))}"
+    # ``eval/calibrate.py`` writes one fragment of its own into the same
+    # directory (``target_tex`` defaults to ``results/tables/calibration.tex``);
+    # it is the only fragment a chapter may input that this module does not own.
+    written = set(tables.TABLE_FILES) | {"calibration.tex"}
+    assert referenced <= written, (
+        f"report/ inputs fragments neither tables.py nor calibrate.py writes: "
+        f"{sorted(referenced - written)}"
     )
 
 
@@ -565,3 +569,195 @@ def test_format_trace_survives_a_question_that_produced_nothing():
     assert "(no plan was produced)" in text
     assert "(no answer was produced)" in text
     assert "ollama is not running" in text
+
+
+# ---------------------------------------------------------------------------
+# Supporting-fact protocols: no significance mark across a protocol boundary
+# ---------------------------------------------------------------------------
+
+def _sp_run(
+    config_name: str,
+    *,
+    protocol: str,
+    sp: float,
+    pool_recall: float,
+    n: int = 8,
+    answers: bool = True,
+) -> tables.RunData:
+    """A scored run built in memory, cited-subset or whole-pool by construction."""
+    records, scores = [], {}
+    for i in range(n):
+        qid = f"q{i}"
+        evidence = [{"evidence_id": f"e{k}", "title": f"T{k}", "sent_id": 0} for k in range(1, 8)]
+        citations = ["e1", "e2"] if protocol == "cited" else ["p1"]
+        records.append({
+            "qid": qid, "config_name": config_name, "dataset": DATASET,
+            "final_answer": "x" if answers else "",
+            "citations": citations, "evidence": evidence, "metrics": {},
+        })
+        scores[qid] = {
+            "em": 1.0 if answers else 0.0, "f1": 1.0 if answers else 0.0,
+            "sp_em": 0.0, "sp_precision": sp, "sp_recall": sp, "sp_f1": sp,
+            "sp_pool_recall": pool_recall,
+            "sp_n_predicted": 2.0 if protocol == "cited" else 7.0, "sp_n_pool": 7.0,
+            "recall@2": 0.5, "recall@5": 0.5, "recall@10": 0.5, "ndcg@10": 0.5, "mrr": 0.5,
+        }
+    return tables.RunData(
+        config_name=config_name, dataset=DATASET, run_id=f"{config_name}_{DATASET}_x",
+        run_dir=Path("."), records=records, scores=scores,
+    )
+
+
+def _answer_table(runs: dict[str, tables.RunData], monkeypatch) -> str:
+    monkeypatch.setattr(tables, "eval_sample_size", lambda dataset, *, cfg: 8)
+    text = tables.main_results_tables(
+        runs, DATASET, cfg=load_config(), config_names=list(runs), samples=200, seed=1,
+    )
+    return text.split(r"\end{table}")[0]
+
+
+def test_sp_protocol_is_read_off_the_records():
+    assert _sp_run("agentic_full", protocol="cited", sp=0.5, pool_recall=0.8).sp_protocol == "cited"
+    assert _sp_run("hybrid_rerank", protocol="pool", sp=0.4, pool_recall=0.7).sp_protocol == "pool"
+
+
+def test_sp_marks_are_withheld_across_protocols_and_kept_like_for_like(monkeypatch):
+    """A maximal SP-F1 gap across the protocol boundary must NOT be bolded.
+
+    The agentic run is scored on two cited sentences, the reference on its
+    whole seven-sentence pool; the difference is between measurements, not
+    systems. The one column measured the same way for both -- the whole-pool
+    recall -- keeps its mark.
+    """
+    runs = {
+        "hybrid_rerank": _sp_run("hybrid_rerank", protocol="pool", sp=0.0, pool_recall=0.0, answers=False),
+        "agentic_full": _sp_run("agentic_full", protocol="cited", sp=1.0, pool_recall=1.0),
+    }
+    answer = _answer_table(runs, monkeypatch)
+    row = _row_cells(_row(answer, "agentic_full"))
+    header = [h.strip() for h in _row_cells(next(
+        line for line in answer.splitlines() if line.strip().startswith("System")
+    ))]
+    sp_p, sp_r, sp_f1, pool = (header.index(h) for h in ("SP-P", "SP-R", "SP-F1", "Pool SP-R"))
+    assert row[sp_p] == "1.000" and row[sp_r] == "1.000" and row[sp_f1] == "1.000"
+    assert row[pool] == r"\textbf{1.000}"
+    assert "not one protocol" in answer
+    assert "no significance mark is placed between rows of different protocol" in answer
+
+
+def test_sp_marks_are_kept_when_both_runs_share_a_protocol(monkeypatch):
+    runs = {
+        "hybrid_rerank": _sp_run("hybrid_rerank", protocol="cited", sp=0.0, pool_recall=0.0, answers=False),
+        "agentic_full": _sp_run("agentic_full", protocol="cited", sp=1.0, pool_recall=1.0),
+    }
+    answer = _answer_table(runs, monkeypatch)
+    row = _row_cells(_row(answer, "agentic_full"))
+    assert row.count(r"\textbf{1.000}") == 4          # SP-P, SP-R, SP-F1, Pool SP-R
+    assert "not one protocol" not in answer          # nothing to warn about
+
+
+def test_answer_table_prints_sp_precision_and_recall(generated):
+    header = next(
+        line for line in generated["main_results.tex"].splitlines()
+        if line.strip().startswith("System") and "SP-F1" in line
+    )
+    cells = _row_cells(header)
+    assert "SP-P" in cells and "SP-R" in cells and "Pool SP-R" in cells
+    assert cells.index("SP-P") < cells.index("SP-R") < cells.index("SP-F1")
+
+
+# ---------------------------------------------------------------------------
+# Agent metrics: the recomputed Saved column and the selected plan depth
+# ---------------------------------------------------------------------------
+
+def _agent_run(config_name: str, records: list[dict], config: dict) -> tables.RunData:
+    return tables.RunData(
+        config_name=config_name, dataset=DATASET, run_id=f"{config_name}_{DATASET}_x",
+        run_dir=Path("."), records=records, config_snapshot=config,
+    )
+
+
+def _agent_record(qid: str) -> dict:
+    step = lambda agent, **kw: {  # noqa: E731
+        "agent": agent, "cycle": kw.pop("cycle", 0), "llm_calls": [], "tool_calls": [],
+        "output_summary": kw.pop("output", {}), "input_summary": kw.pop("inputs", {}),
+    }
+    return {
+        "qid": qid, "config_name": "agentic_full", "dataset": DATASET, "final_answer": "x",
+        "citations": ["e1"], "evidence": [{"evidence_id": "e1", "title": "T", "sent_id": 0}],
+        "best_cycle": 0,
+        "metrics": {
+            "llm_calls": 4, "llm_calls_saved": 3, "tool_calls": 6, "latency_s": 10.0,
+            "plan_depth": 1, "n_subqueries": 2, "cycles": 2, "replans": 1,
+            "best_cycle": 0, "citation_grounding": 1.0, "answered": True,
+        },
+        "plans": [{"revision": 0, "depth": 2}, {"revision": 1, "depth": 1}],
+        "steps": [
+            step("retriever", output={"selector": "planner_hint"}),
+            step("kg", output={"linked_by": "alias_match"}),
+            step("extractor", output={"rung": 2}),
+            step("verifier", inputs={"adjudication_skipped": "outside_uncertainty_band"}),
+        ],
+    }
+
+
+def test_saved_column_is_recomputed_under_the_stated_definition(monkeypatch):
+    """Agents credited 3 (routing, KG alias, verifier gate). Under the headline
+    configuration only the verifier gate is a reachable call; the extraction
+    rung the agents never credited is. Saved = 2, and the caption shows all
+    four terms with the agents' own 3 beside them."""
+    monkeypatch.setattr(tables, "eval_sample_size", lambda dataset, *, cfg: 3)
+    config = {"agents": {
+        "retriever": {"heuristic_shortcut": True},
+        "kg": {"entity_linker": "alias_match"},
+        "verifier": {"enabled": True, "method": "nli_plus_llm"},
+    }}
+    runs = {"agentic_full": _agent_run(
+        "agentic_full", [_agent_record(f"q{i}") for i in range(3)], config
+    )}
+    text = tables.agent_metrics_table(runs, DATASET, cfg=load_config(), config_names=["agentic_full"])
+    header = _row_cells(next(l for l in text.splitlines() if l.strip().startswith("System")))
+    row = _row_cells(_row(text, "agentic_full"))
+    assert row[header.index("Saved")] == "2.00"
+    assert row[header.index("Plan depth")] == "2.00"          # selected (cycle 0), not latest (1)
+    assert row[header.index("Re-plan rate (trig.)")] == "1.000"
+    assert row[header.index("Re-plan rate (exec.)")] == "1.000"
+    assert r"\textbf{verifier gate 1.00}" in text
+    assert r"\textbf{extraction 1.00}" in text
+    assert "routing 1.00" in text and r"\textbf{routing" not in text
+    assert "KG alias 1.00" in text and r"\textbf{KG alias" not in text
+    assert "agents recorded 3.00" in text
+    assert "2.00 selected against 1.00 latest" in text
+
+
+def test_saved_column_counts_routing_when_the_llm_router_is_reachable(monkeypatch):
+    monkeypatch.setattr(tables, "eval_sample_size", lambda dataset, *, cfg: 3)
+    config = {"agents": {
+        "retriever": {"heuristic_shortcut": False},
+        "kg": {"entity_linker": "llm"},
+        "verifier": {"enabled": True, "method": "nli_plus_llm"},
+    }}
+    runs = {"agentic_full": _agent_run(
+        "agentic_full", [_agent_record(f"q{i}") for i in range(3)], config
+    )}
+    text = tables.agent_metrics_table(runs, DATASET, cfg=load_config(), config_names=["agentic_full"])
+    header = _row_cells(next(l for l in text.splitlines() if l.strip().startswith("System")))
+    row = _row_cells(_row(text, "agentic_full"))
+    assert row[header.index("Saved")] == "4.00"
+    assert r"\textbf{routing 1.00}" in text and r"\textbf{KG alias 1.00}" in text
+
+
+def test_discarded_replans_are_reported_beside_the_executed_rate(monkeypatch):
+    monkeypatch.setattr(tables, "eval_sample_size", lambda dataset, *, cfg: 2)
+    config = {"agents": {"verifier": {"enabled": True}}}
+    records = [_agent_record("q0"), _agent_record("q1")]
+    # q1: the re-plan was T2b-discarded -- one replan, one cycle, one plan.
+    records[1]["metrics"].update({"cycles": 1, "replans": 1})
+    records[1]["plans"] = records[1]["plans"][:1]
+    runs = {"agentic_full": _agent_run("agentic_full", records, config)}
+    text = tables.agent_metrics_table(runs, DATASET, cfg=load_config(), config_names=["agentic_full"])
+    header = _row_cells(next(l for l in text.splitlines() if l.strip().startswith("System")))
+    row = _row_cells(_row(text, "agentic_full"))
+    assert row[header.index("Re-plan rate (trig.)")] == "1.000"
+    assert row[header.index("Re-plan rate (exec.)")] == "0.500"
+    assert "1 of 2 questions, executed rate 0.500" in text

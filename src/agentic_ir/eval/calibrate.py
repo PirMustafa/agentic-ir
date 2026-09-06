@@ -1279,7 +1279,7 @@ def latex_fragment(report: CalibrationReport) -> str:
     else:
         rel_rows = [
             [
-                f"[{b.lower:.1f}, {b.upper:.1f})",
+                f"{{[}}{b.lower:.1f}, {b.upper:.1f})",  # braced: a bare [ after \ is an optional arg to TeX
                 str(b.n),
                 fmt(b.mean_confidence),
                 fmt(b.accuracy),
