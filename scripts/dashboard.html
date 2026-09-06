@@ -6,186 +6,306 @@
 <title>Agentic IR — dashboard</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%E2%86%BA%3C/text%3E%3C/svg%3E">
 <style>
-  :root {
-    --bg: #0f1115;
-    --panel: #161920;
-    --panel-2: #1c2029;
-    --line: #272c37;
-    --ink: #e6e9ef;
-    --dim: #8b93a5;
-    --dimmer: #5d6577;
-    --accent: #6ea8fe;
-    --good: #63c98a;
-    --bad: #e0736d;
-    --warn: #d9a441;
-    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
-    --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased;
-  }
-  header {
-    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
-    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
-    position: sticky; top: 0; z-index: 20;
-  }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
-  header .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); }
-  nav { margin-left: auto; display: flex; gap: 2px; }
-  nav button {
-    background: none; border: 1px solid transparent; color: var(--dim);
-    padding: 6px 13px; border-radius: 6px; cursor: pointer;
-    font: 500 13px var(--sans);
-  }
-  nav button:hover { color: var(--ink); background: var(--panel-2); }
-  nav button.on { color: var(--ink); background: var(--panel-2); border-color: var(--line); }
+/* ---------------------------------------------------------------------------
+   Minimalism / Swiss: grid-based, high contrast, functional. Dense scale
+   (8-32px) because this is a dashboard, not a marketing page.
 
-  main { padding: 20px; max-width: 1500px; margin: 0 auto; }
-  section { display: none; }
-  section.on { display: block; }
+   No webfont is loaded on purpose. This tool runs on localhost beside an
+   evaluation that may be using the whole machine, and a blocking request to
+   fonts.googleapis.com would make it fail to render exactly when the network
+   is unavailable. System stacks give the same mono/sans split for free.
+--------------------------------------------------------------------------- */
+:root {
+  color-scheme: dark;
 
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px;
-       color: var(--dim); font-weight: 600; margin: 26px 0 10px; }
-  h2:first-child { margin-top: 0; }
+  /* Semantic tokens. Components reference these, never raw hex. */
+  --bg:        #0d0f13;
+  --surface:   #151920;
+  --surface-2: #1b2029;
+  --line:      #2a313d;
+  --line-soft: #212733;
 
-  .card {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: 8px; padding: 14px 16px; margin-bottom: 12px;
-  }
-  .muted { color: var(--dim); }
-  .dimmer { color: var(--dimmer); }
-  .mono { font-family: var(--mono); }
-  .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  /* Text contrast on --surface (#151920):
+     --ink 15.8:1, --ink-2 7.4:1, --ink-3 4.6:1 — all >= 4.5:1 for body text.
+     Nothing below 4.5:1 is used for text; --ink-4 is for rules and disabled
+     glyphs only, never for words a reader has to parse. */
+  --ink:       #eef1f6;
+  --ink-2:     #a9b3c4;
+  --ink-3:     #7f8a9c;
+  --ink-4:     #545e6e;
 
-  /* sweep */
-  .runrow {
-    display: grid; grid-template-columns: 210px 92px 1fr 108px; gap: 12px;
-    align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line);
-  }
-  .runrow:last-child { border-bottom: 0; }
-  .runrow .cfg { font-family: var(--mono); font-size: 13px; }
-  .runrow .ds { font-family: var(--mono); font-size: 12px; color: var(--dim); }
-  .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
-  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
-  .bar > i.done { background: var(--good); }
-  .bar > i.none { background: var(--dimmer); }
-  .runrow .n { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--dim); }
+  --accent:    #6ea8fe;   /* 7.1:1 on --surface */
+  --good:      #5fd08a;   /* 9.4:1 */
+  --bad:       #ff8a80;   /* 8.2:1 */
+  --warn:      #e3b341;   /* 10.1:1 */
 
-  /* tables */
-  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; }
-  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { color: var(--dim); font-weight: 600; font-size: 11.5px; text-transform: none; position: sticky; top: 0; background: var(--panel); }
-  tbody tr:hover { background: var(--panel-2); }
-  .scroll { overflow-x: auto; }
+  --focus:     #8fc0ff;
 
-  /* question list */
-  .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
-  input[type=text], select {
-    background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
-    padding: 6px 10px; border-radius: 6px; font: 13px var(--sans);
-  }
-  input[type=text] { min-width: 240px; }
-  input[type=text]:focus, select:focus { outline: 1px solid var(--accent); }
-  .chip {
-    border: 1px solid var(--line); background: var(--panel-2); color: var(--dim);
-    border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 12.5px;
-  }
-  .chip.on { color: var(--ink); border-color: var(--accent); }
-  .qlist tr { cursor: pointer; }
-  .qlist td.q { white-space: normal; max-width: 520px; }
-  .tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--dim); }
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px;
 
-  /* detail */
-  .cycle { border-left: 2px solid var(--line); padding-left: 14px; margin: 12px 0; }
-  .cycle.sel { border-left-color: var(--good); }
-  .kv { display: grid; grid-template-columns: 190px 1fr; gap: 2px 14px; font-family: var(--mono); font-size: 12.5px; }
-  .kv dt { color: var(--dim); }
-  .kv dd { margin: 0; word-break: break-word; }
-  .ev { border-top: 1px solid var(--line); padding: 7px 0; font-size: 13px; }
-  .ev .meta { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
-  .path { font-family: var(--mono); font-size: 11.5px; line-height: 2; }
-  .t { padding: 2px 6px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--line); }
-  .t.back { border-color: var(--good); color: var(--good); }
-  .t.rev { border-color: var(--warn); color: var(--warn); }
-  button.primary {
-    background: var(--accent); color: #0b1220; border: 0; padding: 8px 16px;
-    border-radius: 6px; font: 600 13px var(--sans); cursor: pointer;
-  }
-  button.primary:disabled { background: var(--dimmer); color: var(--panel); cursor: not-allowed; }
-  .note { border-left: 2px solid var(--warn); padding: 8px 12px; color: var(--dim); font-size: 13px; background: var(--panel-2); border-radius: 0 6px 6px 0; }
-  a { color: var(--accent); }
-  pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 0; }
+  --radius: 6px;
+  --dur: 180ms;
+
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur: 0ms; }
+  *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+}
+
+* { box-sizing: border-box; }
+html, body { overflow-x: hidden; }        /* the page never scrolls sideways */
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 400 14px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;      /* data columns must not jitter */
+}
+
+/* Focus: 2px solid, offset, >=3:1 against every surface it lands on. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+.skip {
+  position: absolute; left: var(--space-2); top: -48px; z-index: 100;
+  background: var(--accent); color: #06101f; padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius); font-weight: 600; text-decoration: none;
+  transition: top var(--dur) ease;
+}
+.skip:focus { top: var(--space-2); }
+
+/* --- header ------------------------------------------------------------- */
+header {
+  display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--line); background: var(--surface);
+  position: sticky; top: 0; z-index: 20;
+}
+header h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+.hdr-meta { color: var(--ink-3); font: 12px var(--mono); }
+[role="tablist"] { margin-left: auto; display: flex; gap: 2px; }
+[role="tab"] {
+  background: none; border: 1px solid transparent; color: var(--ink-2);
+  padding: 6px 14px; border-radius: var(--radius); cursor: pointer;
+  font: 500 13px var(--sans); min-height: 32px;
+}
+[role="tab"]:hover { color: var(--ink); background: var(--surface-2); }
+[role="tab"][aria-selected="true"] {
+  color: var(--ink); background: var(--surface-2); border-color: var(--line);
+}
+
+main { padding: var(--space-5); max-width: 1560px; margin: 0 auto; }
+[role="tabpanel"][hidden] { display: none; }
+
+h2 {
+  font: 600 12px/1.4 var(--sans); text-transform: uppercase; letter-spacing: .8px;
+  color: var(--ink-3); margin: var(--space-6) 0 var(--space-3);
+}
+h2:first-child { margin-top: 0; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--space-4); margin-bottom: var(--space-3);
+}
+.mono { font-family: var(--mono); }
+.muted { color: var(--ink-3); }
+.good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+
+/* --- states: the three screens every async view owes the reader ---------- */
+.state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--ink-2); }
+.state h3 { margin: 0 0 var(--space-2); font-size: 14px; color: var(--ink); font-weight: 600; }
+.state p  { margin: 0 auto var(--space-4); max-width: 52ch; color: var(--ink-3); font-size: 13px; }
+.state .mono { font-size: 12px; word-break: break-word; }
+.skeleton {
+  height: 12px; border-radius: 3px; margin: var(--space-2) 0;
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 37%, var(--surface-2) 63%);
+  background-size: 400% 100%; animation: shimmer 1.4s ease infinite;
+}
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+button.btn {
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--line);
+  padding: 8px 16px; border-radius: var(--radius); cursor: pointer;
+  font: 500 13px var(--sans); min-height: 36px;
+  transition: background var(--dur) ease, border-color var(--dur) ease;
+}
+button.btn:hover:not(:disabled) { background: var(--line-soft); border-color: var(--ink-4); }
+button.btn.primary { background: var(--accent); color: #06101f; border-color: var(--accent); font-weight: 600; }
+button.btn.primary:hover:not(:disabled) { background: #8bbaff; }
+button.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* --- sweep grid --------------------------------------------------------- */
+.runrow {
+  display: grid; grid-template-columns: minmax(150px,200px) 84px 1fr 120px;
+  gap: var(--space-3); align-items: center;
+  padding: 7px 0; border-bottom: 1px solid var(--line-soft);
+}
+.runrow:last-child { border-bottom: 0; }
+.runrow .cfg { font: 13px var(--mono); overflow-wrap: anywhere; }
+.runrow .st  { font: 12px var(--mono); color: var(--ink-3); }
+.bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); transition: width var(--dur) ease; }
+.bar > i.done { background: var(--good); }
+.bar > i.none { background: var(--line); }
+.runrow .n { font: 12px var(--mono); text-align: right; color: var(--ink-3); }
+@media (max-width: 720px) {
+  .runrow { grid-template-columns: 1fr 84px; grid-template-areas: "cfg st" "bar bar" "n n"; }
+  .runrow .cfg { grid-area: cfg; } .runrow .st { grid-area: st; }
+  .bar { grid-area: bar; } .runrow .n { grid-area: n; text-align: left; }
+}
+
+/* --- tables ------------------------------------------------------------- */
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font: 12.5px var(--mono); }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+th {
+  color: var(--ink-2); font-weight: 600; font-size: 11.5px;
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+tbody tr:hover { background: var(--surface-2); }
+.qlist tbody tr { cursor: pointer; }
+.qlist tbody tr:focus-visible { background: var(--surface-2); }
+.qlist td.q { white-space: normal; max-width: 460px; overflow-wrap: anywhere; }
+.qlist td.a { white-space: normal; max-width: 240px; overflow-wrap: anywhere; }
+
+/* --- controls ----------------------------------------------------------- */
+.filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-3); }
+label.field { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--ink-3); }
+input[type=text], select {
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--ink);
+  padding: 7px 10px; border-radius: var(--radius); font: 13px var(--sans); min-height: 34px;
+}
+input[type=text] { min-width: 240px; }
+.chips { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.chip {
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2);
+  border-radius: 999px; padding: 5px 13px; cursor: pointer; font: 12.5px var(--sans);
+  min-height: 30px;
+}
+.chip:hover { color: var(--ink); }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); background: var(--line-soft); }
+
+/* --- detail ------------------------------------------------------------- */
+.cycle { border-left: 2px solid var(--line); padding-left: var(--space-4); margin: var(--space-3) 0; }
+.cycle.sel { border-left-color: var(--good); }
+.kv { display: grid; grid-template-columns: minmax(140px,190px) 1fr; gap: 2px var(--space-4); font: 12.5px var(--mono); }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.ev { border-top: 1px solid var(--line-soft); padding: 7px 0; font-size: 13px; }
+.ev .meta { font: 11.5px var(--mono); color: var(--ink-3); }
+.path { font: 11.5px/2.1 var(--mono); overflow-wrap: anywhere; }
+.t { padding: 2px 6px; border-radius: 3px; background: var(--surface-2); border: 1px solid var(--line); }
+.t.back { border-color: var(--good); color: var(--good); }
+.t.rev  { border-color: var(--warn); color: var(--warn); }
+.note {
+  border-left: 3px solid var(--warn); padding: var(--space-3) var(--space-4);
+  color: var(--ink-2); font-size: 13px; background: var(--surface-2);
+  border-radius: 0 var(--radius) var(--radius) 0; margin-bottom: var(--space-3);
+}
+.note.err { border-left-color: var(--bad); }
+pre { font: 12px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+a { color: var(--accent); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 </style>
 </head>
 <body>
 
+<a class="skip" href="#main">Skip to content</a>
+
 <header>
   <h1>Agentic AI for Information Retrieval</h1>
-  <span class="sub" id="hdr">loading…</span>
-  <nav>
-    <button data-tab="sweep" class="on">Sweep</button>
-    <button data-tab="questions">Questions</button>
-    <button data-tab="results">Results</button>
-    <button data-tab="ask">Ask</button>
-  </nav>
+  <span class="hdr-meta" id="hdr">loading…</span>
+  <div role="tablist" aria-label="Views">
+    <button role="tab" id="tab-sweep"     aria-controls="panel-sweep"     aria-selected="true">Sweep</button>
+    <button role="tab" id="tab-questions" aria-controls="panel-questions" aria-selected="false" tabindex="-1">Questions</button>
+    <button role="tab" id="tab-results"   aria-controls="panel-results"   aria-selected="false" tabindex="-1">Results</button>
+    <button role="tab" id="tab-ask"       aria-controls="panel-ask"       aria-selected="false" tabindex="-1">Ask</button>
+  </div>
 </header>
 
-<main>
+<main id="main">
 
-<section id="sweep" class="on">
+<section role="tabpanel" id="panel-sweep" aria-labelledby="tab-sweep">
   <h2>Evaluation runs</h2>
-  <div class="card" id="sweepcard">reading results/runs/…</div>
+  <div class="card" id="sweepcard" aria-busy="true"></div>
   <h2>Sweep process</h2>
   <div class="card" id="proccard"></div>
 </section>
 
-<section id="questions">
+<section role="tabpanel" id="panel-questions" aria-labelledby="tab-questions" hidden>
   <h2>Browse a run</h2>
   <div class="card">
     <div class="filters">
-      <select id="runsel"></select>
-      <input type="text" id="qsearch" placeholder="search question, answer, gold, qid">
-      <span class="chip" data-f="all">all</span>
-      <span class="chip" data-f="wrong">wrong</span>
-      <span class="chip" data-f="right">right</span>
-      <span class="chip" data-f="replanned">re-planned</span>
-      <span class="chip" data-f="recovered">recovered by re-plan</span>
-      <span class="chip" data-f="abstain">abstained</span>
-      <span class="muted" id="qcount"></span>
+      <label class="field">Run
+        <select id="runsel" aria-label="Run to browse"></select>
+      </label>
+      <label class="field">Search
+        <input type="text" id="qsearch" placeholder="question, answer, gold, qid" autocomplete="off">
+      </label>
+      <div class="chips" role="group" aria-label="Filter questions" id="chips">
+        <button class="chip" data-f="all"       aria-pressed="true">all</button>
+        <button class="chip" data-f="wrong"     aria-pressed="false">wrong</button>
+        <button class="chip" data-f="right"     aria-pressed="false">right</button>
+        <button class="chip" data-f="replanned" aria-pressed="false">re-planned</button>
+        <button class="chip" data-f="recovered" aria-pressed="false">recovered by re-plan</button>
+        <button class="chip" data-f="abstain"   aria-pressed="false">abstained</button>
+      </div>
+      <span class="muted mono" id="qcount" aria-live="polite"></span>
     </div>
-    <div class="scroll" style="max-height:60vh;overflow-y:auto">
+    <div class="scroll" style="max-height:58vh;overflow-y:auto">
       <table class="qlist"><thead id="qhead"></thead><tbody id="qbody"></tbody></table>
     </div>
+    <p class="muted" style="margin:var(--space-3) 0 0;font-size:12px">
+      Click or press Enter on a row to open its full trace.
+    </p>
   </div>
   <div id="detail"></div>
 </section>
 
-<section id="results">
+<section role="tabpanel" id="panel-results" aria-labelledby="tab-results" hidden>
   <h2>Generated tables</h2>
-  <div class="muted" style="margin-bottom:12px">
-    Read straight out of <span class="mono">results/tables/*.tex</span> — the same
-    files the report inputs. Regenerate with
-    <span class="mono">python -m agentic_ir.cli tables</span> and reload.
-  </div>
-  <div id="tables">loading…</div>
+  <p class="muted" style="margin-top:calc(var(--space-3) * -1);font-size:13px">
+    Read from <span class="mono">results/tables/*.tex</span> — the same files the report inputs.
+    Regenerate with <span class="mono">python -m agentic_ir.cli tables</span>, then reload.
+  </p>
+  <div id="tables" aria-busy="true"></div>
 </section>
 
-<section id="ask">
+<section role="tabpanel" id="panel-ask" aria-labelledby="tab-ask" hidden>
   <h2>Ask the live system</h2>
   <div id="askguard"></div>
   <div class="card">
     <div class="filters">
-      <input type="text" id="aq" placeholder="a multi-hop question" style="flex:1;min-width:340px">
-      <select id="ads"><option>hotpotqa</option><option>twowiki</option></select>
-      <select id="acfg">
-        <option>agentic_full</option><option>agentic_no_verifier</option>
-        <option>agentic_no_planner</option><option>agentic_no_kg</option>
-      </select>
-      <button class="primary" id="asend">Ask</button>
+      <label class="field" style="flex:1;min-width:300px">Question
+        <input type="text" id="aq" placeholder="a multi-hop question about the corpus"
+               aria-describedby="ahelp" autocomplete="off">
+      </label>
+      <label class="field">Dataset
+        <select id="ads"><option>hotpotqa</option><option>twowiki</option></select>
+      </label>
+      <label class="field">Configuration
+        <select id="acfg">
+          <option>agentic_full</option><option>agentic_no_verifier</option>
+          <option>agentic_no_planner</option><option>agentic_no_kg</option>
+        </select>
+      </label>
+      <button class="btn primary" id="asend">Ask</button>
     </div>
-    <div class="muted" id="astatus"></div>
+    <p id="ahelp" class="muted" style="margin:0 0 var(--space-2);font-size:12px">
+      Only the indexed Wikipedia corpus is searchable. Ask the same question under two
+      configurations to see what the ablation changes.
+    </p>
+    <div class="mono" id="astatus" role="status" aria-live="polite" style="font-size:12.5px"></div>
   </div>
   <div id="adetail"></div>
 </section>
@@ -193,96 +313,255 @@
 </main>
 
 <script>
-const $ = s => document.querySelector(s);
+'use strict';
+/* ---------------------------------------------------------------------------
+   Every network call goes through jget/jpost: both time out, both surface a
+   readable error, and neither can leave a panel spinning forever. A dashboard
+   whose server has died should say so, not look like it is still loading.
+--------------------------------------------------------------------------- */
+const $  = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x !== undefined) n.textContent = x; return n; };
-const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-const num = (v, d = 3) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(d);
+const num = (v, d = 3) => (v === null || v === undefined || Number.isNaN(Number(v))) ? '—' : Number(v).toFixed(d);
+const esc = s => String(s ?? '');
 
-let STATE = { runs: [], rows: [], run: null, filter: 'all', search: '', live: false };
+/* Turn a browser exception into something a reader can act on. "Failed to
+   fetch" is what Chromium says when a localhost server has stopped, and it
+   tells the one person who can restart it nothing at all. */
+function explain(e, timeoutMessage) {
+  if (e.name === 'AbortError') return `${timeoutMessage} — the server may be busy or stopped`;
+  if (/failed to fetch|networkerror|load failed/i.test(e.message)) {
+    return 'the dashboard server is not responding — it was probably stopped. Restart it with: python scripts/dashboard.py --live';
+  }
+  return e.message;
+}
 
-/* ---------------- tabs ---------------- */
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  document.querySelectorAll('main section').forEach(s => s.classList.toggle('on', s.id === b.dataset.tab));
-  if (b.dataset.tab === 'results') loadTables();
+async function jget(url, ms = 20000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ctl.signal });
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}, and the body was not JSON` }));
+    if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
+    return body;
+  } catch (e) {
+    throw new Error(explain(e, `no response in ${ms / 1000}s`));
+  } finally { clearTimeout(timer); }
+}
+
+async function jpost(url, payload, ms = 900000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), signal: ctl.signal,
+    });
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}, and the body was not JSON` }));
+    if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
+    return body;
+  } catch (e) {
+    throw new Error(explain(e, `no answer in ${Math.round(ms / 60000)} minutes, so the run was abandoned`));
+  } finally { clearTimeout(timer); }
+}
+
+/* Three states every async region owes the reader, so none of them is a blank. */
+function showLoading(host, label) {
+  host.setAttribute('aria-busy', 'true');
+  host.innerHTML = '';
+  const s = el('div', 'state');
+  s.appendChild(el('h3', null, label));
+  for (let i = 0; i < 3; i++) {
+    const bar = el('div', 'skeleton');
+    bar.style.width = [82, 96, 64][i] + '%';
+    bar.style.margin = '8px auto';
+    s.appendChild(bar);
+  }
+  host.appendChild(s);
+}
+function showError(host, message, retry) {
+  host.setAttribute('aria-busy', 'false');
+  host.innerHTML = '';
+  const s = el('div', 'state');
+  s.setAttribute('role', 'alert');
+  s.appendChild(el('h3', 'bad', 'Could not load this'));
+  s.appendChild(el('p', 'mono', message));
+  if (retry) { const b = el('button', 'btn', 'Try again'); b.onclick = retry; s.appendChild(b); }
+  host.appendChild(s);
+}
+function showEmpty(host, title, detail) {
+  host.setAttribute('aria-busy', 'false');
+  host.innerHTML = '';
+  const s = el('div', 'state');
+  s.appendChild(el('h3', null, title));
+  if (detail) s.appendChild(el('p', null, detail));
+  host.appendChild(s);
+}
+
+const STATE = { runs: [], rows: [], run: null, filter: 'all', search: '', live: false, tab: 'sweep' };
+
+/* localStorage is a convenience, never a dependency: every access is guarded
+   because a private window or blocked site data throws on read. */
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* not worth reporting */ } },
+};
+
+/* --- tabs: real tablist semantics, arrow keys included ------------------- */
+const tabs = [...document.querySelectorAll('[role="tab"]')];
+function selectTab(name, focus) {
+  STATE.tab = name;
+  tabs.forEach(t => {
+    const on = t.id === 'tab-' + name;
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    if (on && focus) t.focus();
+  });
+  store.set('tab', name);
+  if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name);
+  if (name === 'results') loadTables();
+  if (name === 'questions' && !STATE.rows.length) loadQuestions();
+}
+tabs.forEach((t, i) => {
+  t.onclick = () => selectTab(t.id.replace('tab-', ''));
+  t.onkeydown = e => {
+    const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : e.key === 'Home' ? -i : e.key === 'End' ? tabs.length - 1 - i : 0;
+    if (!d) return;
+    e.preventDefault();
+    selectTab(tabs[(i + d + tabs.length) % tabs.length].id.replace('tab-', ''), true);
+  };
 });
 
-/* ---------------- sweep ---------------- */
-async function loadStatus() {
-  const d = await (await fetch('/api/status')).json();
-  STATE.live = d.live_enabled;
-  const done = d.runs.filter(r => r.complete).length;
-  $('#hdr').textContent = `${done}/${d.runs.length} configurations complete · D03000104`;
+/* --- sweep -------------------------------------------------------------- */
+let statusTimer = null;
+async function loadStatus(initial) {
+  const card = $('#sweepcard');
+  if (initial) showLoading(card, 'Reading results/runs/…');
+  let d;
+  try { d = await jget('/api/status'); }
+  catch (e) {
+    $('#hdr').textContent = 'server unreachable';
+    if (initial || !card.querySelector('.runrow')) showError(card, e.message, () => loadStatus(true));
+    return;
+  }
 
-  const card = $('#sweepcard'); card.innerHTML = '';
-  let ds = null;
-  for (const r of d.runs) {
-    if (r.dataset !== ds) { ds = r.dataset; card.appendChild(el('h2', null, ds)); }
-    const row = el('div', 'runrow');
-    row.appendChild(el('span', 'cfg', r.config));
-    const pct = Math.min(100, 100 * r.n / r.target);
-    row.appendChild(el('span', 'ds', r.complete ? 'complete' : (r.n ? pct.toFixed(0) + '%' : 'not started')));
-    const bar = el('div', 'bar'); const fill = el('i');
-    fill.style.width = pct + '%';
-    fill.className = r.complete ? 'done' : (r.n ? '' : 'none');
-    bar.appendChild(fill); row.appendChild(bar);
-    const age = r.age_s === null ? '' : (r.age_s < 120 ? ' · live' : '');
-    row.appendChild(el('span', 'n', `${r.n} / ${r.target}${age}`));
-    card.appendChild(row);
+  STATE.live = !!d.live_enabled;
+  renderAskGuard();
+
+  const runs = d.runs || [];
+  const done = runs.filter(r => r.complete).length;
+  $('#hdr').textContent = `${done}/${runs.length} configurations complete · D03000104`;
+
+  card.setAttribute('aria-busy', 'false');
+  card.innerHTML = '';
+  if (!runs.length) {
+    showEmpty(card, 'No runs on disk yet',
+      'Run python -m agentic_ir.cli eval --config bm25_only --dataset hotpotqa to create one.');
+  } else {
+    let ds = null;
+    for (const r of runs) {
+      if (r.dataset !== ds) { ds = r.dataset; card.appendChild(el('h2', null, ds)); }
+      const row = el('div', 'runrow');
+      row.appendChild(el('span', 'cfg', r.config));
+      const pct = r.target ? Math.min(100, 100 * r.n / r.target) : 0;
+      row.appendChild(el('span', 'st', r.complete ? 'complete' : (r.n ? pct.toFixed(0) + '%' : 'not started')));
+      const bar = el('div', 'bar'), fill = el('i');
+      fill.style.width = pct + '%';
+      fill.className = r.complete ? 'done' : (r.n ? '' : 'none');
+      bar.appendChild(fill);
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-valuenow', String(r.n));
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', String(r.target));
+      bar.setAttribute('aria-label', `${r.config} on ${r.dataset}`);
+      row.appendChild(bar);
+      const fresh = (r.age_s !== null && r.age_s !== undefined && r.age_s < 120) ? ' · live' : '';
+      row.appendChild(el('span', 'n', `${r.n} / ${r.target}${fresh}`));
+      card.appendChild(row);
+    }
   }
 
   const p = $('#proccard');
+  p.innerHTML = '';
   if (!d.sweep_pid) {
-    p.innerHTML = '<span class="muted">No sweep pid was passed. Start with '
-      + '<span class="mono">--sweep-pid &lt;pid&gt;</span> to have this panel report whether it is alive.</span>';
+    p.appendChild(el('span', 'muted', 'No sweep pid was passed. Start with --sweep-pid <pid> to have this panel report whether it is alive.'));
   } else {
-    p.innerHTML = `<span class="mono">pid ${d.sweep_pid}</span> — `
-      + (d.sweep_alive ? '<span class="good">running</span>' : '<span class="bad">not running</span>');
+    p.appendChild(el('span', 'mono', `pid ${d.sweep_pid} — `));
+    p.appendChild(el('span', d.sweep_alive ? 'good' : 'bad', d.sweep_alive ? 'running' : 'not running'));
   }
-  fillRunSelect(d.all_runs);
+  fillRunSelect(d.all_runs || []);
 }
+
+/* Polling pauses when the tab is hidden: a background tab has no reason to
+   keep waking a server that may be sharing a machine with an evaluation. */
+function schedulePolling() {
+  clearInterval(statusTimer);
+  statusTimer = setInterval(() => { if (!document.hidden) loadStatus(false); }, 20000);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadStatus(false); });
 
 function fillRunSelect(all) {
   const sel = $('#runsel');
-  if (sel.options.length && STATE.runs.length === all.length) return;
-  STATE.runs = all;
   const usable = all.filter(r => r.n > 0).sort((a, b) => b.n - a.n || a.run_id.localeCompare(b.run_id));
+  if (sel.options.length === usable.length && STATE.runs.length === usable.length) return;
+  STATE.runs = usable;
+  const keep = sel.value;
   sel.innerHTML = '';
   for (const r of usable) {
     const o = el('option', null, `${r.config} · ${r.dataset} · n=${r.n}`);
-    o.value = r.run_id; sel.appendChild(o);
+    o.value = r.run_id;
+    sel.appendChild(o);
   }
-  if (usable.length && !STATE.run) { sel.value = usable[0].run_id; loadQuestions(); }
+  const wanted = keep || store.get('run', '') || (usable[0] && usable[0].run_id);
+  if (wanted && usable.some(r => r.run_id === wanted)) sel.value = wanted;
+  if (!STATE.run && sel.value) loadQuestions();
 }
 
-/* ---------------- questions ---------------- */
-$('#runsel').onchange = loadQuestions;
-$('#qsearch').oninput = e => { STATE.search = e.target.value.toLowerCase(); renderQuestions(); };
-document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
-  document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c));
-  STATE.filter = c.dataset.f; renderQuestions();
+/* --- questions ---------------------------------------------------------- */
+$('#runsel').onchange = () => { store.set('run', $('#runsel').value); loadQuestions(); };
+let searchTimer = null;
+$('#qsearch').oninput = e => {                      /* debounced: 250 rows re-render */
+  clearTimeout(searchTimer);
+  const v = e.target.value.toLowerCase();
+  searchTimer = setTimeout(() => { STATE.search = v; renderQuestions(); }, 120);
+};
+$('#chips').addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  [...$('#chips').children].forEach(c => c.setAttribute('aria-pressed', String(c === chip)));
+  STATE.filter = chip.dataset.f;
+  renderQuestions();
 });
-document.querySelector('.chip[data-f=all]').classList.add('on');
 
 async function loadQuestions() {
   const run = $('#runsel').value;
   if (!run) return;
   STATE.run = run;
-  $('#qbody').innerHTML = '<tr><td class="muted">loading…</td></tr>';
-  const d = await (await fetch('/api/questions?run=' + encodeURIComponent(run))).json();
-  STATE.rows = d.rows || [];
-  renderQuestions();
+  const body = $('#qbody');
+  body.innerHTML = '<tr><td colspan="10"><div class="skeleton" style="width:70%"></div></td></tr>';
+  try {
+    const d = await jget('/api/questions?run=' + encodeURIComponent(run));
+    STATE.rows = d.rows || [];
+    renderQuestions();
+  } catch (e) {
+    $('#qhead').innerHTML = '';
+    body.innerHTML = '';
+    const tr = el('tr'), td = el('td');
+    td.colSpan = 10;
+    body.appendChild(tr).appendChild(td);
+    showError(td, e.message, loadQuestions);
+  }
 }
 
 function passes(r) {
   const f = STATE.filter;
-  if (f === 'wrong' && r.em === 1) return false;
-  if (f === 'right' && r.em !== 1) return false;
+  if (f === 'wrong'     && r.em === 1) return false;
+  if (f === 'right'     && r.em !== 1) return false;
   if (f === 'replanned' && !r.replanned) return false;
   if (f === 'recovered' && !(r.replanned && r.best_cycle > 0 && r.em === 1)) return false;
-  if (f === 'abstain' && r.verdict !== 'abstain') return false;
+  if (f === 'abstain'   && r.verdict !== 'abstain') return false;
   if (STATE.search) {
-    const hay = (r.question + ' ' + r.answer + ' ' + r.gold + ' ' + r.qid).toLowerCase();
+    const hay = `${r.question} ${r.answer} ${r.gold} ${r.qid}`.toLowerCase();
     if (!hay.includes(STATE.search)) return false;
   }
   return true;
@@ -291,57 +570,95 @@ function passes(r) {
 function renderQuestions() {
   const rows = STATE.rows.filter(passes);
   $('#qcount').textContent = `${rows.length} of ${STATE.rows.length}`;
-  $('#qhead').innerHTML = '<tr><th>EM</th><th>F1</th><th>question</th><th>answer</th>'
-    + '<th>gold</th><th>conf</th><th>verdict</th><th>cyc</th><th>calls</th><th>s</th></tr>';
-  const body = $('#qbody'); body.innerHTML = '';
-  for (const r of rows.slice(0, 400)) {
+  $('#qhead').innerHTML =
+    '<tr><th scope="col">EM</th><th scope="col">F1</th><th scope="col">question</th>' +
+    '<th scope="col">answer</th><th scope="col">gold</th><th scope="col">conf</th>' +
+    '<th scope="col">verdict</th><th scope="col">cyc</th><th scope="col">calls</th><th scope="col">s</th></tr>';
+  const body = $('#qbody');
+  body.innerHTML = '';
+
+  if (!STATE.rows.length) {
+    const td = el('td'); td.colSpan = 10;
+    body.appendChild(el('tr')).appendChild(td);
+    showEmpty(td, 'This run scored no questions', 'It may still be starting, or its scores.csv is missing.');
+    return;
+  }
+  if (!rows.length) {
+    const td = el('td'); td.colSpan = 10;
+    body.appendChild(el('tr')).appendChild(td);
+    showEmpty(td, 'No question matches these filters',
+      `${STATE.rows.length} questions in this run. Clear the search box or choose "all".`);
+    return;
+  }
+
+  const shown = rows.slice(0, 400);
+  for (const r of shown) {
     const tr = el('tr');
-    tr.onclick = () => openDetail(r.qid);
+    tr.tabIndex = 0;
+    tr.setAttribute('role', 'button');
+    tr.setAttribute('aria-label', `Open trace for: ${r.question}`);
+    const open = () => openDetail(r.qid);
+    tr.onclick = open;
+    tr.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+
     const ok = r.em === 1;
-    tr.innerHTML =
-      `<td class="${ok ? 'good' : 'bad'}">${r.em === null ? '—' : (ok ? '✓' : '✗')}</td>` +
-      `<td>${num(r.f1, 2)}</td>` +
-      `<td class="q">${esc(r.question)}</td>` +
-      `<td>${esc(r.answer)}</td>` +
-      `<td class="muted">${esc(r.gold)}</td>` +
-      `<td>${num(r.confidence, 2)}</td>` +
-      `<td class="${r.verdict === 'accept' ? '' : 'warn'}">${esc(r.verdict)}</td>` +
-      `<td>${r.cycles ?? '—'}${r.replanned ? '<span class="tag" style="margin-left:4px">↺</span>' : ''}</td>` +
-      `<td>${r.llm_calls ?? '—'}</td>` +
-      `<td>${num(r.latency_s, 1)}</td>`;
+    const cell = (text, cls) => { const td = el('td', cls, text); tr.appendChild(td); return td; };
+    cell(r.em === null || r.em === undefined ? '—' : (ok ? '✓' : '✗'), ok ? 'good' : 'bad');
+    cell(num(r.f1, 2));
+    cell(esc(r.question), 'q');
+    cell(esc(r.answer), 'a');
+    cell(esc(r.gold), 'muted');
+    cell(num(r.confidence, 2));
+    cell(esc(r.verdict) || '—', r.verdict === 'accept' ? '' : 'warn');
+    cell((r.cycles ?? '—') + (r.replanned ? ' ↺' : ''));
+    cell(r.llm_calls ?? '—');
+    cell(num(r.latency_s, 1));
     body.appendChild(tr);
   }
-  if (rows.length > 400) body.appendChild(el('tr', 'muted')).innerHTML =
-    `<td colspan="10" class="muted">showing the first 400 of ${rows.length}</td>`;
+  if (rows.length > shown.length) {
+    const tr = el('tr'), td = el('td', 'muted', `showing the first ${shown.length} of ${rows.length}`);
+    td.colSpan = 10;
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
 }
 
-/* ---------------- one question ---------------- */
+/* --- one question ------------------------------------------------------- */
 async function openDetail(qid) {
-  const d = await (await fetch(`/api/question?run=${encodeURIComponent(STATE.run)}&qid=${encodeURIComponent(qid)}`)).json();
-  renderDetail($('#detail'), d);
-  $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const host = $('#detail');
+  showLoading(host, 'Loading trace…');
+  host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  try {
+    const d = await jget(`/api/question?run=${encodeURIComponent(STATE.run)}&qid=${encodeURIComponent(qid)}`);
+    renderDetail(host, d);
+  } catch (e) {
+    showError(host, e.message, () => openDetail(qid));
+  }
 }
 
 function transitionPath(list) {
   const wrap = el('div', 'path');
   for (const t of list || []) {
     const id = String(t).split(':')[0];
-    const span = el('span', 't' + (id === 'T11' ? ' back' : id === 'T9' ? ' rev' : ''), t);
-    wrap.appendChild(span); wrap.appendChild(document.createTextNode(' '));
+    wrap.appendChild(el('span', 't' + (id === 'T11' ? ' back' : id === 'T9' ? ' rev' : ''), t));
+    wrap.appendChild(document.createTextNode(' '));
   }
+  if (!(list || []).length) wrap.appendChild(el('span', 'muted', 'no transitions recorded'));
   return wrap;
 }
 
 function renderDetail(host, d) {
-  const r = d.record, s = d.scores || {};
+  const r = (d && d.record) || {};
+  const s = (d && d.scores) || {};
+  host.setAttribute('aria-busy', 'false');
   host.innerHTML = '';
 
   const top = el('div', 'card');
   top.appendChild(el('h2', null, 'Question'));
-  top.appendChild(el('div', null, r.question));
+  top.appendChild(el('div', null, r.question || '(no question recorded)'));
   const kv = el('dl', 'kv');
   const gold = (r.gold || {}).answer;
-  const pairs = [
+  for (const [k, v] of [
     ['final answer', r.final_answer],
     ['gold', gold ?? '(none — live question)'],
     ['answer sentence', r.answer_sentence],
@@ -357,21 +674,20 @@ function renderDetail(host, d) {
     ['latency', num((r.metrics || {}).latency_s, 1) + ' s'],
     ['citation grounding', num((r.metrics || {}).citation_grounding)],
     ['qid', r.qid],
-  ];
-  for (const [k, v] of pairs) {
+  ]) {
     kv.appendChild(el('dt', null, k));
-    kv.appendChild(el('dd', null, v === undefined || v === null ? '—' : String(v)));
+    kv.appendChild(el('dd', null, (v === undefined || v === null || v === '') ? '—' : String(v)));
   }
   top.appendChild(kv);
   host.appendChild(top);
 
-  if (r._notes && r._notes.length) {
-    const n = el('div', 'note');
-    n.textContent = 'DEGRADED: ' + r._notes.join(' · ');
-    host.appendChild(n);
+  for (const n of (r._notes || [])) {
+    const box = el('div', 'note');
+    box.setAttribute('role', 'alert');
+    box.textContent = 'DEGRADED: ' + n;
+    host.appendChild(box);
   }
 
-  // cycles: plan, candidate, verification, side by side per revision
   const plans = r.plans || [], cands = r.candidates || [], vers = r.verifications || [];
   const nCycles = Math.max(plans.length, cands.length, vers.length, 1);
   const cyc = el('div', 'card');
@@ -384,7 +700,7 @@ function renderDetail(host, d) {
       box.appendChild(el('div', 'mono', `strategy ${plan.strategy} (model said ${plan.strategy_llm}) · origin ${plan.origin}`));
       for (const sq of plan.subqueries || []) {
         const dep = (sq.depends_on || []).length ? ` ← ${sq.depends_on.join(', ')}` : '';
-        box.appendChild(el('div', 'mono dimmer', `  [${sq.id}] hop ${sq.hop} · ${sq.intent}/${sq.answer_type} · ${sq.tool_hint}${dep}`));
+        box.appendChild(el('div', 'mono muted', `  [${sq.id}] hop ${sq.hop} · ${sq.intent}/${sq.answer_type} · ${sq.tool_hint}${dep}`));
         box.appendChild(el('div', null, '  ' + sq.text));
       }
     }
@@ -393,45 +709,54 @@ function renderDetail(host, d) {
     const v = vers[i];
     if (v) {
       box.appendChild(el('div', 'mono ' + (v.verdict === 'accept' ? 'good' : 'warn'),
-        `  ${v.verdict.toUpperCase()} ${num(v.confidence)} · nli ${num(v.nli_support)} · cite ${num(v.citation_grounding)} · retr ${num(v.retrieval_agreement)} · llm ${v.llm_support === null ? 'not called' : num(v.llm_support)}`));
+        `  ${String(v.verdict || '').toUpperCase()} ${num(v.confidence)} · nli ${num(v.nli_support)} · cite ${num(v.citation_grounding)} · retr ${num(v.retrieval_agreement)} · llm ${v.llm_support === null || v.llm_support === undefined ? 'not called' : num(v.llm_support)}`));
       for (const cl of (v.claims || []).slice(0, 3)) {
-        box.appendChild(el('div', 'mono dimmer',
+        box.appendChild(el('div', 'mono muted',
           `    ${cl.nli_label} ${num(cl.nli_score)} vs ${cl.best_premise_id} → ${cl.supported ? 'supported' : 'NOT supported'}`));
       }
       if ((v.suggested_subqueries || []).length) {
-        box.appendChild(el('div', 'mono warn', '    directive → ' + v.suggested_subqueries[0].slice(0, 140)));
+        box.appendChild(el('div', 'mono warn', '    directive → ' + String(v.suggested_subqueries[0]).slice(0, 140)));
       }
     }
     cyc.appendChild(box);
   }
   host.appendChild(cyc);
 
-  // retrieval + kg
   const ret = el('div', 'card');
   ret.appendChild(el('h2', null, 'Retrieval and graph'));
-  for (const [sqid, b] of Object.entries(r.retrieved || {})) {
-    ret.appendChild(el('div', 'mono', `[${sqid}] ${b.tool} · ${b.selector}/${b.rule_id} · rerank ${b.rerank_applied} · ${b.n_candidates} candidates · ${num(b.latency_s, 2)}s`));
-    ret.appendChild(el('div', 'mono dimmer', '  ' + (b.reason || '')));
-    for (const p of (b.passages || []).slice(0, 3))
-      ret.appendChild(el('div', 'mono dimmer', `    ${num(p.score)}  ${p.title || p.doc_id}`));
+  const retrieved = Object.entries(r.retrieved || {});
+  const kg = Object.entries(r.kg || {});
+  if (!retrieved.length && !kg.length) {
+    ret.appendChild(el('div', 'muted', 'No retrieval was recorded for this question.'));
   }
-  for (const [sqid, b] of Object.entries(r.kg || {})) {
+  for (const [sqid, b] of retrieved) {
+    ret.appendChild(el('div', 'mono', `[${sqid}] ${b.tool} · ${b.selector}/${b.rule_id} · rerank ${b.rerank_applied} · ${b.n_candidates} candidates · ${num(b.latency_s, 2)}s`));
+    if (b.reason) ret.appendChild(el('div', 'mono muted', '  ' + b.reason));
+    for (const p of (b.passages || []).slice(0, 3)) {
+      ret.appendChild(el('div', 'mono muted', `    ${num(p.score)}  ${p.title || p.doc_id}`));
+    }
+  }
+  for (const [sqid, b] of kg) {
     ret.appendChild(el('div', 'mono', `[${sqid}] kg · seeds ${JSON.stringify(b.seeds)} · bridge ${b.bridge_entity || 'none'} · ${b.n_paths} paths · ${b.n_neighbors} neighbours · ${num(b.latency_s, 2)}s`));
   }
-  if (!Object.keys(r.retrieved || {}).length) ret.appendChild(el('div', 'muted', 'no retrieval recorded'));
   host.appendChild(ret);
 
-  // evidence
+  const evidence = r.evidence || [];
   const ev = el('div', 'card');
-  ev.appendChild(el('h2', null, `Evidence (${(r.evidence || []).length})`));
+  ev.appendChild(el('h2', null, `Evidence (${evidence.length})`));
+  if (!evidence.length) {
+    ev.appendChild(el('div', 'muted', 'The evidence pool is empty — the answer, if any, came from the model rather than the corpus.'));
+  }
   const cited = new Set(r.citations || []);
-  for (const e of (r.evidence || []).slice(0, 12)) {
+  for (const e of evidence.slice(0, 12)) {
     const box = el('div', 'ev');
-    box.appendChild(el('div', 'meta' + (cited.has(e.evidence_id) ? ' good' : ''),
-      `${e.evidence_id}${cited.has(e.evidence_id) ? ' ← cited' : ''} · ${e.provenance} · ${e.title} s${e.sent_id} · ${num(e.score)}`));
+    const isCited = cited.has(e.evidence_id);
+    box.appendChild(el('div', 'meta' + (isCited ? ' good' : ''),
+      `${e.evidence_id}${isCited ? ' ← cited' : ''} · ${e.provenance} · ${e.title} s${e.sent_id} · ${num(e.score)}`));
     box.appendChild(el('div', null, e.text));
     ev.appendChild(box);
   }
+  if (evidence.length > 12) ev.appendChild(el('div', 'muted mono', `… and ${evidence.length - 12} more`));
   host.appendChild(ev);
 
   const path = el('div', 'card');
@@ -441,92 +766,126 @@ function renderDetail(host, d) {
   host.appendChild(path);
 }
 
-/* ---------------- results ---------------- */
+/* --- results ------------------------------------------------------------ */
 let tablesLoaded = false;
-async function loadTables() {
-  if (tablesLoaded) return; tablesLoaded = true;
-  const d = await (await fetch('/api/tables')).json();
-  const host = $('#tables'); host.innerHTML = '';
-  for (const t of d.tables || []) {
+async function loadTables(force) {
+  if (tablesLoaded && !force) return;
+  const host = $('#tables');
+  showLoading(host, 'Reading results/tables/…');
+  let d;
+  try { d = await jget('/api/tables', 30000); }
+  catch (e) { showError(host, e.message, () => loadTables(true)); return; }
+
+  tablesLoaded = true;
+  host.setAttribute('aria-busy', 'false');
+  host.innerHTML = '';
+  const tables = d.tables || [];
+  if (!tables.length) {
+    showEmpty(host, 'No generated tables yet', 'Run python -m agentic_ir.cli tables to produce them.');
+    return;
+  }
+  for (const t of tables) {
     const card = el('div', 'card');
     card.appendChild(el('h2', null, t.label));
     const sc = el('div', 'scroll');
     const tbl = el('table');
-    const thead = el('thead'); const hr = el('tr');
-    for (const h of t.header) hr.appendChild(el('th', null, h));
-    thead.appendChild(hr); tbl.appendChild(thead);
+    tbl.setAttribute('aria-label', t.label);
+    const thead = el('thead'), hr = el('tr');
+    for (const h of t.header) { const th = el('th', null, h); th.scope = 'col'; hr.appendChild(th); }
+    thead.appendChild(hr);
+    tbl.appendChild(thead);
     const tb = el('tbody');
     for (const row of t.rows) {
       const tr = el('tr');
-      for (const c of row) {
+      row.forEach((c, i) => {
         const td = el('td', c.includes('▾') ? 'bad' : '', c);
+        if (i === 0) td.scope = 'row';
         tr.appendChild(td);
-      }
+      });
       tb.appendChild(tr);
     }
-    tbl.appendChild(tb); sc.appendChild(tbl); card.appendChild(sc);
-    const cap = el('div', 'muted', t.caption);
-    cap.style.marginTop = '10px'; cap.style.fontSize = '12px';
-    card.appendChild(cap);
+    tbl.appendChild(tb);
+    sc.appendChild(tbl);
+    card.appendChild(sc);
+    if (t.caption) {
+      const cap = el('div', 'muted', t.caption);
+      cap.style.cssText = 'margin-top:var(--space-3);font-size:12px;line-height:1.5';
+      card.appendChild(cap);
+    }
     host.appendChild(card);
   }
-  const cal = d.calibration || {};
-  for (const [name, data] of Object.entries(cal)) {
+  for (const [name, data] of Object.entries(d.calibration || {})) {
     const card = el('div', 'card');
     card.appendChild(el('h2', null, 'calibration · ' + name));
-    const pre = el('pre', 'muted', JSON.stringify(data, null, 2).slice(0, 4000));
-    card.appendChild(pre); host.appendChild(card);
+    card.appendChild(el('pre', 'muted', JSON.stringify(data, null, 2).slice(0, 4000)));
+    host.appendChild(card);
   }
 }
 
-/* ---------------- ask ---------------- */
+/* --- ask ---------------------------------------------------------------- */
 function renderAskGuard() {
   const g = $('#askguard');
+  g.innerHTML = '';
+  const box = el('div', 'note');
   if (STATE.live) {
-    g.innerHTML = '<div class="note">Live answering is on. The encoders run on CPU, so this '
-      + 'adds no VRAM — it queues behind any evaluation run for Ollama\'s single generation '
-      + 'slot, which makes both slower. Expect 15–60s.</div>';
-    $('#asend').disabled = false;
+    box.textContent = 'Live answering is on. The encoders run on CPU, so this adds no VRAM — it queues behind any evaluation for Ollama’s single generation slot, which makes both slower. Expect 15–60s, or longer if the model has to load.';
   } else {
-    g.innerHTML = '<div class="note">Live answering is <b>disabled</b>. Restart with '
-      + '<span class="mono">python scripts/dashboard.py --live</span>. It queues behind a '
-      + 'running evaluation rather than competing with it, as long as '
-      + '<span class="mono">query_device</span>, <span class="mono">rerank.device</span> and '
-      + '<span class="mono">nli_device</span> are still <span class="mono">cpu</span>.</div>';
-    $('#asend').disabled = true;
+    box.textContent = 'Live answering is disabled. Restart with: python scripts/dashboard.py --live';
   }
+  g.appendChild(box);
+  $('#asend').disabled = !STATE.live;
+  $('#aq').disabled = !STATE.live;
 }
 
-$('#asend').onclick = async () => {
+let asking = false;
+async function ask() {
+  if (asking) return;
   const q = $('#aq').value.trim();
-  if (!q) return;
+  const status = $('#astatus');
+  if (!q) {
+    status.innerHTML = '';
+    status.appendChild(el('span', 'bad', 'Type a question first.'));
+    $('#aq').focus();
+    return;
+  }
+  asking = true;
   $('#asend').disabled = true;
   const t0 = Date.now();
   const tick = setInterval(() => {
-    $('#astatus').textContent = `running… ${((Date.now() - t0) / 1000).toFixed(0)}s (30–60s is normal)`;
+    status.textContent = `running… ${((Date.now() - t0) / 1000).toFixed(0)}s (15–60s is normal)`;
   }, 500);
+  status.textContent = 'running… 0s';
   try {
-    const res = await fetch('/api/ask', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: q, dataset: $('#ads').value, config: $('#acfg').value }),
-    });
-    const d = await res.json();
+    const d = await jpost('/api/ask', { question: q, dataset: $('#ads').value, config: $('#acfg').value });
     clearInterval(tick);
-    if (d.error) { $('#astatus').innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; }
-    else {
-      $('#astatus').textContent = `done in ${num(d.record._wall_s, 1)}s`;
-      renderDetail($('#adetail'), d);
-    }
+    status.textContent = `done in ${num((d.record || {})._wall_s, 1)}s`;
+    renderDetail($('#adetail'), d);
   } catch (e) {
     clearInterval(tick);
-    $('#astatus').innerHTML = '<span class="bad">' + esc(e.message) + '</span>';
+    status.innerHTML = '';
+    const span = el('span', 'bad', e.message);
+    status.appendChild(span);
+    const retry = el('button', 'btn', 'Retry');
+    retry.style.marginLeft = 'var(--space-3)';
+    retry.onclick = ask;
+    status.appendChild(retry);
+  } finally {
+    asking = false;
+    $('#asend').disabled = !STATE.live;
   }
-  $('#asend').disabled = !STATE.live;
-};
+}
+$('#asend').onclick = ask;
+$('#aq').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } };
 
-/* ---------------- boot ---------------- */
-loadStatus().then(renderAskGuard);
-setInterval(loadStatus, 20000);
+/* --- boot --------------------------------------------------------------- */
+selectTab(['sweep', 'questions', 'results', 'ask'].includes(location.hash.slice(1))
+  ? location.hash.slice(1)
+  : (store.get('tab', 'sweep')));
+loadStatus(true).finally(schedulePolling);
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (['sweep', 'questions', 'results', 'ask'].includes(h) && h !== STATE.tab) selectTab(h);
+});
 </script>
 </body>
 </html>
