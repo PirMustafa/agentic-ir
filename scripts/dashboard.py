@@ -322,26 +322,126 @@ def calibration_payload() -> dict:
 # the live pipeline
 # ---------------------------------------------------------------------------
 
+#: Built pipelines, keyed by (dataset, kg enabled). A pipeline is a corpus, two
+#: indexes, a graph and three encoders; rebuilding it per request costs about
+#: six seconds of pure repetition. The per-question state lives in
+#: ``QuestionState``, which is constructed fresh below, so what is shared here
+#: is read-only search structure.
+_PIPELINES: dict[tuple[str, bool], object] = {}
+_PIPELINE_LOCK = threading.Lock()
+
+
+def get_pipeline(dataset: str, cfg, with_kg: bool):
+    """A pipeline for this dataset, built once per process.
+
+    The lock covers construction rather than use: two browser tabs asking their
+    first question at the same moment would otherwise each load a 105 MB FAISS
+    index and three models, and the loser's work would be thrown away.
+    """
+    from agentic_ir.eval.run_eval import load_pipeline
+
+    key = (dataset, with_kg)
+    with _PIPELINE_LOCK:
+        if key not in _PIPELINES:
+            _PIPELINES[key] = load_pipeline(dataset, cfg, with_kg=with_kg)
+        return _PIPELINES[key]
+
+
+def warm_encoders(pipeline) -> None:
+    """Force the lazy models to load, by using them once on a throwaway query.
+
+    ``load_pipeline`` constructs the encoders but sentence-transformers defers
+    the actual weight load until the first call, so building a pipeline warms
+    nothing. Measured on this machine, the first real question paid 69.7s in
+    retrieval and the third paid 0.4s -- the entire difference is weights being
+    read on demand while somebody watches a spinner. Doing it here moves that
+    cost to startup, where it is a progress line instead of a broken feature.
+
+    Every failure is swallowed: a warm-up that cannot run is a slow first
+    question, not a reason to refuse to serve the read-only tabs.
+    """
+    query = "warm up the encoders"
+    try:
+        hits = pipeline.hybrid.search(query, top_k=8)
+    except Exception:  # noqa: BLE001
+        return
+    reranker = getattr(pipeline, "reranker", None)
+    if reranker is None:
+        return
+    try:
+        reranker.rerank(query, hits)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def warm_nli(cfg) -> bool:
+    """Load the NLI model the Verifier uses, for the same reason.
+
+    A separate function because it is a separate model with its own lazy load,
+    worth about 9s on the first entailment check. It goes through
+    ``_shared_nli`` rather than ``preflight_nli``: preflight builds its own
+    scorer to test it, whereas ``_shared_nli`` is the ``lru_cache``d instance
+    the Verifier will actually reach for, so warming that one is what makes the
+    first question fast.
+
+    Returns whether the model answered, which is also a preflight: a degraded
+    NLI scorer pushes almost everything above the confidence threshold and the
+    re-plan loop stops firing, so it is worth knowing at startup.
+    """
+    try:
+        from agentic_ir.agents.verifier import _shared_nli
+
+        scorer = _shared_nli(
+            str(cfg.get("agents.verifier.nli_model",
+                        "cross-encoder/nli-deberta-v3-base")),
+            str(cfg.get("agents.verifier.nli_device", "cpu")),
+        )
+        rows = scorer.score([("A cat sat on the mat.", "A cat sat on the mat.")])
+        return bool(rows) and rows[0].get("entailment", 0.0) > 0.5
+    except Exception:  # noqa: BLE001 - optional, like every other warm-up
+        return False
+
+
 def ask_live(question: str, dataset: str, config_name: str) -> dict:
     """Run one question through the real system and return its trace record.
 
-    Imports are local and the pipeline is built per request. Loading a corpus
-    and three models at import time would make a read-only dashboard pay the
-    whole cost of the live one.
+    Imports are local so a read-only dashboard never pays for the live one, and
+    the pipeline is cached across requests: only the first question of a
+    session waits for the corpus, the indexes and the encoders.
     """
     from agentic_ir.config import load_config
-    from agentic_ir.eval.run_eval import build_system, config_for, load_pipeline
+    from agentic_ir.eval.run_eval import build_system, config_for
     from agentic_ir.llm import get_client
     from agentic_ir.state import QuestionState
     from agentic_ir.trace import build_trace_record
 
     cfg = config_for(config_name, load_config())
-    pipeline = load_pipeline(
-        dataset, cfg, with_kg=bool(cfg.get("agents.kg.enabled", True))
+    build_started = time.perf_counter()
+    pipeline = get_pipeline(
+        dataset, cfg, bool(cfg.get("agents.kg.enabled", True))
     )
+
+    # A pipeline whose index failed to load still runs, and still answers --
+    # from the model's memory, with no retrieval behind it and a citation list
+    # pointing at an empty pool. That is the exact failure ch5 documents, and
+    # it is indistinguishable from a real answer in the browser. Seen for real:
+    # a third Python process on this machine pushed the box to 3.4 GB free and
+    # HybridIndex.load died with std::bad_alloc, leaving pipeline.hybrid None
+    # and a note nobody would read. Refuse instead.
+    if getattr(pipeline, "hybrid", None) is None and getattr(pipeline, "bm25", None) is None:
+        notes = "; ".join(getattr(pipeline, "notes", ()) or ()) or "no index loaded"
+        # Drop it so a retry after the memory frees up rebuilds rather than
+        # serving the broken one forever.
+        _PIPELINES.pop((dataset, bool(cfg.get("agents.kg.enabled", True))), None)
+        raise RuntimeError(
+            f"retrieval is unavailable, so an answer here would come from the "
+            f"model's memory rather than from the corpus: {notes}"
+        )
+
     system = build_system(
         config_name, dataset, cfg=cfg, pipeline=pipeline, client=get_client()
     )
+    setup_s = time.perf_counter() - build_started
     qid = f"live_{int(time.time())}"
     state = QuestionState(
         qid=qid, question=question, dataset=dataset, config_name=config_name
@@ -359,6 +459,7 @@ def ask_live(question: str, dataset: str, config_name: str) -> dict:
         transitions=tuple(getattr(system, "transitions", ()) or ()),
     )
     record["_wall_s"] = time.perf_counter() - started
+    record["_setup_s"] = setup_s
     record["_notes"] = list(getattr(pipeline, "notes", ()) or ())
     return {"record": record, "scores": {}}
 
@@ -476,6 +577,11 @@ def main(argv: list[str] | None = None) -> int:
         help="pid of a running sweep, so the status panel can say whether it is alive",
     )
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument(
+        "--no-warm", action="store_true",
+        help="with --live, do not build the pipeline at startup; the first "
+             "question pays for it instead",
+    )
     args = parser.parse_args(argv)
 
     LIVE_ENABLED = args.live
@@ -489,6 +595,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.sweep_pid:
         alive = "alive" if sweep_alive(args.sweep_pid) else "not running"
         print(f"  sweep     pid {args.sweep_pid} ({alive})")
+    if args.live and not args.no_warm:
+        # Build the pipeline before the first question rather than during it.
+        # It costs the same six seconds either way; paying them here means the
+        # first thing the user types is not the slowest thing they ever ask.
+        from agentic_ir.config import load_config
+        from agentic_ir.eval.run_eval import config_for
+
+        cfg = config_for("agentic_full", load_config())
+        for dataset in ("hotpotqa",):
+            started = time.perf_counter()
+            print(f"  warming   {dataset} …", end="", flush=True)
+            try:
+                pipeline = get_pipeline(
+                    dataset, cfg, bool(cfg.get("agents.kg.enabled", True))
+                )
+                warm_encoders(pipeline)
+                nli_ok = warm_nli(cfg)
+                print(f" ready in {time.perf_counter() - started:.1f}s"
+                      f"{'' if nli_ok else '  (NLI DEGRADED -- verdicts will be unreliable)'}")
+                for note in getattr(pipeline, "notes", ()) or ():
+                    print(f"            DEGRADED: {note}")
+            except Exception as exc:  # noqa: BLE001 - warming is an optimisation
+                print(f" failed ({type(exc).__name__}: {exc}); it will load on demand")
     print("  ctrl-c to stop")
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

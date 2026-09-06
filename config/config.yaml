@@ -78,9 +78,13 @@ llm:
   # deterministic default. Logged as `parse_failures` in the run trace.
   max_format_retries: 2
   request_timeout_s: 180
-  # Response cache. Makes a completed run exactly reproducible and turns
-  # re-runs after a harness bug from hours into seconds. Latency figures in
-  # the report must come from a cold-cache run (meta.json records which).
+  # NOT IMPLEMENTED. There is no sqlite cache anywhere in src/; cache_hit is
+  # False on all 1065 calls of the headline run, and run_eval.py reads this key
+  # only to record cache coldness in meta.json. The flag and the path are kept
+  # so the reported metric keeps its meaning, but nothing reads from or writes
+  # to that file. Every latency figure in the report is therefore a cold
+  # measurement, which is what the report needs -- the caching this once
+  # promised would have made them meaningless.
   cache:
     enabled: true
     path: data/cache/llm_cache.sqlite
@@ -111,7 +115,13 @@ retrieval:
   rerank:
     enabled: true
     model: cross-encoder/ms-marco-MiniLM-L-6-v2
-    device: cpu                  # ~0.3-0.6s for 50 short passages; keeps VRAM free
+    # Measured over 722 calls of the headline run: 5.0s median, 7.2s p90 for
+    # 50 pairs -- an earlier comment here claimed 0.3-0.6s and was wrong by a
+    # factor of ten. This is the single largest cost per question, about 15s of
+    # a 28s median. It stays on CPU regardless: the card has ~1.5GB free while
+    # Ollama holds the model, and on Windows an over-commit spills to shared
+    # memory and makes generation crawl.
+    device: cpu
     top_n: 50                    # rerank depth
   top_k: 10                      # final passages returned per sub-query
 
