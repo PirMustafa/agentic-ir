@@ -166,7 +166,7 @@ is decided by a seven-rule decision table over cheap lexical features and costs
 zero model calls, entity linking is alias matching, graph traversal is
 bidirectional breadth-first search, and the confidence blend is arithmetic. The
 worst case for a full agentic question is 15 model calls against a hard cap of
-20, and the typical cost is four to seven. A system that cannot afford to think
+20, and the measured mean is 4.26 and 3.80. A system that cannot afford to think
 everywhere is forced to be explicit about where thinking pays --- and, as
 Chapter~\ref{ch:implementation} reports, the division of labour it settles on
 is not always the one that was designed: in the headline run the Planner
@@ -206,8 +206,7 @@ re-plan rate, and latency --- so that no accuracy gain is presented without the
 compute it consumed. The evaluation grid comprises nine configurations ---
 lexical, dense, hybrid, naive-RAG and self-ask baselines, the agentic system
 and its three ablations --- over two multi-hop benchmarks. At the time of
-writing all nine have been run on HotpotQA, one of them still on a partial
-slice, and six on 2WikiMultihopQA; Chapter~\ref{ch:implementation} states
+writing all nine are complete on HotpotQA and seven on 2WikiMultihopQA; Chapter~\ref{ch:implementation} states
 precisely which rows are complete, and no conclusion is drawn from a partial
 one.
 

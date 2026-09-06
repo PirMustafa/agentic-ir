@@ -32,7 +32,8 @@ describing what it produced, mislabelling its own plan's \texttt{strategy} field
 in 7 of those 8, which is why strategy is derived from the DAG shape and the
 model's label discarded. And agency is affordable here only because most of it
 is deterministic: a full agentic question costs at worst 15 model calls against
-a cap of 20 and typically four to seven, since tool routing, entity linking,
+a cap of 20 and a measured mean of 4.26 on HotpotQA and 3.80 on
+2WikiMultihopQA, since tool routing, entity linking,
 graph traversal, and the confidence arithmetic consume none.
 
 \section{Empirical Findings}
@@ -83,8 +84,10 @@ answer string, significantly on HotpotQA and directionally on
 
 On evidence the answer is different in kind rather than simply reversed.
 Supporting-fact F1 is 0.481 against 0.412 for \texttt{hybrid\_rerank} on
-HotpotQA and 0.421 against 0.327 on 2WikiMultihopQA, both significant under
-the paired bootstrap. The generative baselines were reported in an earlier
+HotpotQA and 0.421 against 0.327 on 2WikiMultihopQA, on neither of which is a
+significance mark placed: the two rows are scored under different protocols,
+and the like-for-like column is Pool SP-R, where the lead is significant on
+both datasets. The generative baselines were reported in an earlier
 draft at 0.000 on that metric, as systems that ``emit no supporting facts'';
 that was a harness defect in resolving their citations, and corrected they
 score 0.405 and 0.412 on HotpotQA and 0.318 and 0.327 on 2WikiMultihopQA ---
@@ -311,8 +314,8 @@ also not finished. The ablations run against the same 250-question evaluation
 split rather than a subsample; at the time of writing the six baseline and
 full-system configurations are complete on both datasets, all three ablations
 are complete on HotpotQA, and on 2WikiMultihopQA \texttt{agentic\_no\_verifier}
-is complete while \texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg}
-had not started. The verifier ablation is therefore the only one measured
+is complete, \texttt{agentic\_no\_planner} is mid-run and
+\texttt{agentic\_no\_kg} had not started. The verifier ablation is therefore the only one measured
 twice, and the two measurements disagree --- which is precisely why the
 planner's and the graph's single nulls are not treated here as settled either.
 A component that looked significant on HotpotQA turned out to do nothing on
@@ -421,9 +424,10 @@ result, knowledge-graph result and extracted-answer maps on the question state
 are keyed by that identifier. A re-plan's \texttt{q1} therefore overwrites
 cycle~0's \texttt{q1}, while any identifier the new plan does not reuse
 survives from the earlier cycle, stale. Of the 118 HotpotQA questions on which
-\texttt{agentic\_full} re-planned, 115 lost their cycle-0 retrieval results in
-this way and 92 carry at least one stale identifier from a plan that was no
-longer current. Two consequences follow. The retrieval metrics reported for
+\texttt{agentic\_full} re-planned, all 118 had at least one cycle-0 identifier
+reused by a later plan and so lost that identifier's cycle-0 results, and 92
+end with at least one entry in \texttt{retrieved} whose key the final plan does
+not use --- a result carried over from a cycle that is no longer current. Two consequences follow. The retrieval metrics reported for
 the 47.2\% of HotpotQA questions that re-planned are computed over a
 last-cycle-plus-stale pool rather than over everything the question retrieved,
 so the agentic rows of the retrieval tables are a lower bound on what was

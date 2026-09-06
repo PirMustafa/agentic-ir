@@ -70,15 +70,18 @@ by $-0.037$ $[-0.065, -0.011]$, a significant loss, and 2WikiMultihopQA F1 by
 $-0.001$ $[-0.025, +0.025]$, $p = 1.000$ --- though it fired on 98 of those
 250 questions and charged the same doubled cost. The contribution is therefore
 reported as conditional rather than general. On attribution the agentic system is not more accurate but
-differently accountable. Its supporting-fact F1 of 0.481 and 0.421 exceeds the
-strongest retrieval baseline's 0.412 and 0.327 significantly, and it is scored
+differently accountable. Its supporting-fact F1 of 0.481 and 0.421 sits above
+the strongest retrieval baseline's 0.412 and 0.327, though the two are scored
+under different protocols and the tables place no significance mark between
+them; it is scored
 on the sentences it actually cited, at a citation grounding of 0.960 and 0.976
 where every baseline resolves no citation at all; the generative baselines,
 scored on their whole evidence pool, reach a supporting-fact F1 that is not
 comparable with it and is marked as such, while on the like-for-like recall
 of the whole pool the agentic system leads every baseline, 0.793 and 0.684
-against 0.706 and 0.622. Deterministic routing, linking, and
-traversal displaced a measured share of the model calls the system would
+against 0.706 and 0.622, significantly on both. The gated verifier
+adjudication and the deterministic extraction ladder displaced 2.60 and 3.10
+model calls per question that the system would
 otherwise have made --- though in the headline run the Planner's own tool hint
 pre-empted the routing table on every sub-query, so six of its seven rules
 never executed --- and the re-plan loop fired on 47.2\% and 39.2\% of

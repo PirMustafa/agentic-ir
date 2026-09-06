@@ -17,8 +17,9 @@ Chapter~\ref{ch:methodology} and an orchestrator that sequences them.
 The orchestrator is an \emph{explicit} state machine rather than a chain of
 function calls. Nine states (\texttt{INIT}, \texttt{PLAN}, \texttt{EXECUTE},
 \texttt{AGGREGATE}, \texttt{SYNTHESIZE}, \texttt{VERIFY},
-\texttt{REPLAN\_GATE}, \texttt{FINALIZE}, \texttt{DONE}) and fourteen labelled
-transitions are enumerated in a table in the source, and the transition
+\texttt{REPLAN\_GATE}, \texttt{FINALIZE}, \texttt{DONE}) and fourteen numbered
+transitions --- fifteen labels, since \texttt{T2b} diverts the transition whose
+number it shares --- are enumerated in a table in the source, and the transition
 sequence taken by each question is written into its trace. This costs more code
 than implicit control flow and buys two things. First, the mechanism is
 inspectable: the claim that the system re-plans is checkable against a recorded
@@ -184,7 +185,7 @@ $(-\text{score}, \text{doc\_id})$ rather than by score alone --- because two
 passages with identical scores would otherwise be ordered by dictionary
 insertion and change the reported metrics between runs.
 
-The implementation is covered by 248 automated tests. Three enforce properties
+The implementation is covered by 377 automated tests. Three enforce properties
 that would otherwise fail silently: that no module outside the model client can
 reach the network, that no agent reads the gold answer carried on the question
 state for tracing, and that the knowledge graph builder never opens a gold
@@ -362,8 +363,11 @@ Supporting-fact F1 is the metric on which the trade is favourable, and it is
 the one this system is built to win. \texttt{agentic\_full} reaches SP-F1 of
 0.481 on HotpotQA against 0.412 for \texttt{hybrid\_rerank}, 0.377 for
 \texttt{dense\_only} and 0.330 for \texttt{bm25\_only}, and 0.421 on
-2WikiMultihopQA against 0.327, 0.314 and 0.273; both margins over the strongest
-retrieval baseline are significant under the paired bootstrap. Supporting-fact
+2WikiMultihopQA against 0.327, 0.314 and 0.273. Those margins carry no
+significance mark and none is claimed: the agentic rows are scored on the
+sentences they cited and the retrieval rows on their whole pool, and a paired
+test between two protocols would be measuring the protocols. The column that
+is comparable like for like is Pool SP-R, below. Supporting-fact
 EM moves with it, from 0.016 to 0.088 and from 0.016 to 0.124, though those
 absolute values say plainly that recovering the gold evidence set
 \emph{exactly} remains rare.
@@ -381,7 +385,7 @@ scored on their whole evidence pool and reach the starred SP-F1 figures in the
 tables, 0.412 and 0.405 on HotpotQA and 0.327 and 0.318 on 2WikiMultihopQA.
 Those figures are printed beside the agentic ones but are not comparable with
 them, and the star says so. The agentic system is scored on the sentences it
-actually cited, a mean of 1.5 sentences per question on HotpotQA and 1.6 on
+actually cited, a mean of 1.5 sentences per question on both HotpotQA and
 2WikiMultihopQA; the baselines are scored on everything they retrieved, a
 mean of 6.9 and 8.9. The SP-P and SP-R columns show the two protocols pulling
 in opposite directions: on HotpotQA the agentic system's cited set has a
@@ -484,7 +488,7 @@ the backward edge, leaving a system that plans and retrieves in multiple steps
 but never revisits its own answer; the difference between it and the full
 system is the contribution of this project, measured rather than asserted.
 
-The study is complete on HotpotQA and half complete on 2WikiMultihopQA, and
+The study is complete on HotpotQA and one row into three on 2WikiMultihopQA, and
 each row's sample size is printed so that no reader has to take that on trust.
 All three ablations --- \texttt{agentic\_no\_verifier},
 \texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg} --- have covered all
@@ -649,8 +653,7 @@ unrelated to the question. The trace record scores that sentence at an NLI
 support above 0.99 and a citation grounding of 1.0 --- the sentence is, after
 all, entailed by the evidence it was copied from --- against a retrieval
 agreement of 0.0, and the Verifier accepted the answer at a confidence of
-0.82; Chapter~
-ef{ch:conclusions} quotes the exact component values from
+0.82; Chapter~\ref{ch:conclusions} quotes the exact component values from
 the record. Nothing in the blend is miscomputed. The Verifier entails the \texttt{answer\_sentence} field and never
 the \texttt{answer} itself, so an answer sentence that is faithful to a cited
 sentence but not to the question passes at high confidence regardless of what
@@ -754,8 +757,9 @@ agentic system's citations resolve to real sentences at a grounding of 0.960
 and 0.976, and no baseline's citations resolve at all. Its supporting-fact F1
 is a property of a precise cited subset, and the pool-scored figures for
 \texttt{self\_ask} and \texttt{naive\_rag} are not the same measurement, so no
-ranking on that column is claimed. Whether an auditable answer is worth close
-to three times the median latency of the decomposing baseline is a property of
+ranking on that column is claimed. Whether an auditable answer is worth between three
+and six times the median latency of the decomposing baseline --- 2.7 times on
+2WikiMultihopQA and 6.3 on HotpotQA --- is a property of
 the deployment and not of the benchmark, and the tables are reported in a form
 that lets the reader decide it rather than being told.
 
