@@ -454,13 +454,21 @@ def test_the_chapters_input_exactly_the_files_this_module_writes():
         for match in re.finditer(r"\\input\{([^}]*results/tables/[^}]*)\}",
                                  tex.read_text(encoding="utf-8")):
             referenced.add(Path(match.group(1)).name)
-    # ``eval/calibrate.py`` writes one fragment of its own into the same
-    # directory (``target_tex`` defaults to ``results/tables/calibration.tex``);
-    # it is the only fragment a chapter may input that this module does not own.
-    written = set(tables.TABLE_FILES) | {"calibration.tex"}
+    # Three sibling modules write their own fragment into the same directory,
+    # each answering a question the main tables cannot. They are named here
+    # rather than allowed by wildcard so that a chapter inputting a fragment no
+    # module produces is still caught -- which is the failure this test exists
+    # for, and the reason the allow-list is a list.
+    other_generators = {
+        "calibration.tex": "eval/calibrate.py",
+        "confidence_diagnostic.tex": "eval/confidence.py",
+        "replication.tex": "eval/replication.py",
+    }
+    written = set(tables.TABLE_FILES) | set(other_generators)
     assert referenced <= written, (
-        f"report/ inputs fragments neither tables.py nor calibrate.py writes: "
-        f"{sorted(referenced - written)}"
+        f"report/ inputs fragments no generator writes: "
+        f"{sorted(referenced - written)}. Fragments are produced by tables.py "
+        f"or by one of: {sorted(set(other_generators.values()))}"
     )
 
 

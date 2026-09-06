@@ -740,3 +740,69 @@ own grid rather than asserted.
 deferred to this row), `ch5` Empirical Findings and Limitations. The
 completeness paragraph now reads "eighteen of eighteen" rather than listing
 what is in flight.
+
+### 10.9 The runs were never reproducible, and the correction does not work
+
+Two findings from the post-hoc correction experiment, both negative, both kept.
+
+**1. Execution drift.** `agentic_no_verifier` was re-run on the identical
+HotpotQA slice -- a configuration with no verifier, so nothing about the
+experiment could touch it. 15 of 250 answers changed and EM moved 0.396 to
+0.384, F1 0.474 to 0.459. 13 of the 15 also drew a different evidence pool.
+
+Cause, from the runs' own `meta.json`: `seeding.pythonhashseed` is `null` for
+the whole evaluated grid and `"0"` for the re-run. `cli.py` pins it and
+re-execs; `run_eval.py` invoked directly inherited whatever the shell had, and
+that is how the grid was launched. Python randomises string hashing per
+process, the evidence pool is built from sets, set order follows the hash, and
+the pool decides the answer.
+
+This is now the report's error bar on execution, separate from every bootstrap
+interval (all of which resample questions and hold execution fixed). It leaves
+the planner ablation (+0.121) and the verifier ablation on HotpotQA (-0.037)
+clear of it, and puts `agentic_no_kg` (-0.009, +0.018) and the verifier on
+2WikiMultihopQA (-0.001) inside it. Those three were reported as nulls and
+stay nulls; what is ruled out is reading any of them as a small real effect in
+either direction. See `results/tables/replication.tex` and ch5 Limitations.
+
+FIXED: `run_eval.py` now calls `ensure_hash_seed` exactly as `cli.py` does, so
+both entry points pin it. Verified: a fresh run records `pythonhashseed: '42'`
+where it previously recorded `null`. This does not retroactively fix the grid;
+re-running it under a pinned seed is the first thing a continuation should do.
+
+**2. The answer-bearing correction does not correct anything.** The veto is a
+pure function of two recorded fields, so it was replayed over the existing
+runs rather than re-run:
+
+| | AUC as run | AUC with veto |
+|---|---|---|
+| hotpotqa | 0.538 [0.468, 0.610] | 0.541 [0.470, 0.613] |
+| twowiki | 0.513 [0.426, 0.607] | 0.499 [0.415, 0.590] |
+
+No improvement on HotpotQA, slightly worse on 2WikiMultihopQA. And the veto
+fires at the base rate: 14 of the 27 vetoed HotpotQA answers were wrong, a
+rate of 0.52 against a base rate of 0.57; on 2WikiMultihopQA 33 of 41, a rate
+of 0.80 against a base rate of 0.78. It is not selecting wrong answers, it is
+selecting answers.
+
+So the diagnosis was right about the mechanism -- a copied answer sentence is
+entailed by its own source whatever the answer says -- and wrong about the
+cure. Every component of the blend is at chance independently (nli 0.529 and
+0.508, citation 0.494 and 0.504, retrieval 0.521 and 0.533), so no rule about
+which string gets entailed can rescue a blend whose inputs carry no signal.
+The correction is kept in the code behind `entail_target`, defaulted off, with
+the measurement that rejects it.
+
+The full 250-question run of the corrected configuration was NOT completed:
+`agentic_full` segfaulted three times under memory pressure (2.0 GB free of
+31.6 GB), and given the replay result it was not worth six GPU-hours to retry.
+`agentic_no_verifier` did complete, and is the source of finding 1.
+
+**Ten config keys declared.** `agents.verifier.entail_threshold`,
+`contradiction_threshold` and `evidence_passages`; `agents.kg.max_seeds` and
+`llm_link_on_empty`; `agents.retriever.rerank_min_pool`;
+`retrieval.rerank.batch_size`; and `retrieval.sparse.stopwords`,
+`index_title` and `method_variant` were read with in-code defaults and
+appeared in no configuration file. All are now declared at the values the code
+already used, so the report's descriptions of verifier thresholds, KG seeding,
+rerank pooling and the BM25 variant are checkable against `config.yaml`.

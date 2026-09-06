@@ -9,15 +9,15 @@
   \centering
   \small
   \setlength{\tabcolsep}{5pt}
-  \caption{Whether the Verifier's confidence separates correct answers from incorrect ones, on the runs the ablation study reports. \textit{AUC} is the probability that a correct answer is scored above an incorrect one, so 0.5 is chance; \textit{ECE} is the mean gap between stated confidence and observed accuracy over ten equal-width bins; \textit{trigger gap} is the accuracy of the questions the Verifier sends back minus the accuracy of the ones it accepts. A useful trigger sends back the answers that were wrong, so the gap should be clearly \emph{negative}; a gap whose interval spans zero means the loop is choosing which questions to retry without regard to whether they needed retrying. Intervals are 95\% percentile bootstraps over questions. \textbf{This is a diagnostic, not a calibration.} It is computed on the evaluation slice, because that is where the ablation result it explains was measured, and it selects no threshold, weight or other parameter -- tuning anything on these questions would be leakage, which is what the disjoint calibration slice of Table~\ref{tab:calibration} exists to prevent.}
+  \caption{Whether the Verifier's confidence separates correct answers from incorrect ones, on the runs the ablation study reports. \textit{AUC} is the probability that a correct answer is scored above an incorrect one, so 0.5 is chance; \textit{ECE} is the mean gap between stated confidence and observed accuracy over ten equal-width bins; \textit{trigger gap} is the accuracy of the questions the Verifier sends back minus the accuracy of the ones it accepts. A useful trigger sends back the answers that were wrong, so the gap should be clearly \emph{negative}; a gap whose interval spans zero means the loop is choosing which questions to retry without regard to whether they needed retrying. Intervals are 95\% percentile bootstraps over questions. The final column replays the \texttt{answer\_bearing} correction over these same recorded verifications --- forcing the entailment term to zero wherever the answer does not appear in the sentence offered for it --- and re-blends. It measures whether the \emph{score} would separate better, not what the loop would then do: a changed verdict re-plans, and a replay cannot generate the answer that would follow. \textbf{This is a diagnostic, not a calibration.} It is computed on the evaluation slice, because that is where the ablation result it explains was measured, and it selects no threshold, weight or other parameter -- tuning anything on these questions would be leakage, which is what the disjoint calibration slice of Table~\ref{tab:calibration} exists to prevent.}
   \label{tab:confidence-diagnostic}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
-  \begin{tabular}{lrrrrrr}
+  \begin{tabular}{lrrrrrrr}
     \toprule
-    Dataset & $n$ & Base rate & Mean conf. & AUC [95\% CI] & ECE & Trigger gap [95\% CI] \\
+    Dataset & $n$ & Base rate & Mean conf. & AUC [95\% CI] & ECE & Trigger gap [95\% CI] & AUC with veto [95\% CI] \\
     \midrule
-    \texttt{hotpotqa} & 250 & 0.432 & 0.687 & 0.538 [0.468, 0.610] & 0.296 & -0.010 [-0.135, 0.112] \\
-    \texttt{twowiki} & 250 & 0.224 & 0.745 & 0.513 [0.426, 0.607] & 0.521 & +0.062 [-0.071, 0.198] \\
+    \texttt{hotpotqa} & 250 & 0.432 & 0.687 & 0.538 [0.468, 0.610] & 0.296 & -0.010 [-0.135, 0.112] & 0.541 [0.470, 0.613] \\
+    \texttt{twowiki} & 250 & 0.224 & 0.745 & 0.513 [0.426, 0.607] & 0.521 & +0.062 [-0.071, 0.198] & 0.499 [0.415, 0.590] \\
     \bottomrule
   \end{tabular}}
 \end{table}

@@ -98,6 +98,12 @@ retrieval:
     k1: 0.9
     b: 0.4
     stemmer: english
+    # Declared at the values the code already defaults to. They were read with
+    # in-code defaults and appeared in no configuration file, which made the
+    # report's descriptions of indexing uncheckable against anything.
+    method_variant: lucene       # bm25s scoring variant
+    stopwords: english_plus      # english + a multi-hop question-word list
+    index_title: true            # prepend the passage title to its indexed text
   dense:
     model: BAAI/bge-small-en-v1.5
     dim: 384
@@ -123,6 +129,7 @@ retrieval:
     # memory and makes generation crawl.
     device: cpu
     top_n: 50                    # rerank depth
+    batch_size: 32               # cross-encoder pairs per forward pass
   top_k: 10                      # final passages returned per sub-query
 
 # ------------------------------------------------------------
@@ -147,10 +154,13 @@ agents:
     # Skip the cross-encoder when the fused top-1 is already decisively ahead;
     # 50 forward passes that cannot change the answer are not worth running.
     rerank_margin_gate: 0.15
+    rerank_min_pool: 10          # below this many candidates, reranking is skipped
   kg:
     enabled: true
     max_hops: 2
     max_neighbors: 25
+    max_seeds: 4                 # entity seeds per sub-query
+    llm_link_on_empty: false     # alias matching finding nothing does NOT buy a model call
     entity_linker: alias_match   # alias_match | llm
   verifier:
     enabled: true
@@ -166,6 +176,9 @@ agents:
     # score under `sentence` is 0.529 (HotpotQA) and 0.508 (2Wiki), both
     # intervals containing chance.
     entail_target: sentence
+    entail_threshold: 0.5        # NLI entailment probability that counts as support
+    contradiction_threshold: 0.7 # above this, a premise is recorded as contradicting
+    evidence_passages: 3         # passages per sub-query the orchestrator turns into evidence
     require_citations: true
     max_evidence: 20
     # Call the LLM adjudicator only inside +/- this band around the threshold.

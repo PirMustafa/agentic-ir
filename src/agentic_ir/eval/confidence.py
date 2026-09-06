@@ -152,6 +152,12 @@ class ConfidenceDiagnostic:
     threshold: float
     n_below: int
     n_above: int
+    #: The `answer_bearing` counterfactual: what the score would have done had
+    #: the veto been in force, replayed over these same recorded verifications.
+    cf_auc: float | None = None
+    cf_auc_ci: tuple[float, float] | None = None
+    cf_vetoed: int = 0
+    cf_vetoed_wrong: int = 0
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -194,6 +200,100 @@ def load_pairs(run_dir: Path) -> list[Pair]:
     return pairs
 
 
+#: The confidence blend's weights, mirrored from ``config.yaml`` so the
+#: counterfactual below reconstructs the score the Verifier actually computed.
+BLEND_WEIGHTS = {"nli": 0.45, "citation": 0.25, "retrieval": 0.15, "llm": 0.15}
+
+
+def blend(nli: float, citation: float, retrieval: float, llm: float | None) -> float:
+    """The Verifier's weighted blend, with the LLM term dropped when absent.
+
+    Duplicated from ``Verifier._blend`` rather than imported because this
+    module reconstructs a score from a *recorded* verification rather than
+    computing one, and importing the agent would drag a model client into a
+    read-only analysis.
+    """
+    terms = [
+        (BLEND_WEIGHTS["nli"], nli),
+        (BLEND_WEIGHTS["citation"], citation),
+        (BLEND_WEIGHTS["retrieval"], retrieval),
+    ]
+    if llm is not None:
+        terms.append((BLEND_WEIGHTS["llm"], llm))
+    total = sum(w for w, _ in terms)
+    return sum(w * v for w, v in terms) / total if total > 0 else 0.0
+
+
+def answer_bearing_veto(record: dict) -> bool:
+    """Whether ``entail_target: answer_bearing`` would reject this hypothesis.
+
+    A pure function of two recorded fields, which is what makes the
+    counterfactual possible without re-running anything: the veto fires when
+    the answer does not appear in the sentence offered as evidence for it.
+    """
+    from ..agents.verifier import _normalise_for_containment
+
+    answer = (record.get("final_answer") or "").strip()
+    sentence = (record.get("answer_sentence") or "").strip()
+    if not answer:
+        return False
+    if not sentence:
+        return True
+    return _normalise_for_containment(answer) not in _normalise_for_containment(sentence)
+
+
+def counterfactual_pairs(run_dir: Path) -> tuple[list[Pair], int, int]:
+    """``(pairs, n_vetoed, n_vetoed_that_were_wrong)`` under the veto.
+
+    Rescores each question's recorded verification with ``nli_support`` forced
+    to zero wherever the veto fires, and re-blends. This measures one thing
+    only: whether the *score* would separate correct from incorrect answers
+    better. It cannot measure what the loop would then do -- a changed verdict
+    re-plans, which produces a different answer, which this replay has no way
+    to generate. For that, run the configuration.
+    """
+    scores = {}
+    scores_path = run_dir / "scores.csv"
+    if scores_path.exists():
+        with open(scores_path, encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("em") not in ("", None):
+                    scores[row["qid"]] = float(row["em"])
+
+    pairs: list[Pair] = []
+    vetoed = wrong = 0
+    traces = run_dir / "traces.jsonl"
+    if not traces.exists():
+        return pairs, 0, 0
+    with open(traces, encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            qid = record["qid"]
+            if qid not in scores:
+                continue
+            verifications = record.get("verifications") or []
+            if not verifications:
+                continue
+            last = verifications[-1]
+            correct = scores[qid]
+            veto = answer_bearing_veto(record)
+            if veto:
+                vetoed += 1
+                wrong += correct != 1.0
+            pairs.append((
+                blend(
+                    0.0 if veto else last.get("nli_support", 0.0),
+                    last.get("citation_grounding", 0.0),
+                    last.get("retrieval_agreement", 0.0),
+                    last.get("llm_support"),
+                ),
+                correct,
+            ))
+    return pairs, vetoed, wrong
+
+
 def diagnose(
     run_dir: Path,
     dataset: str,
@@ -221,6 +321,18 @@ def diagnose(
         notes.append("the re-plan trigger selects questions whose accuracy is "
                      "indistinguishable from the accuracy of the ones it accepts")
 
+    cf_pairs, cf_vetoed, cf_wrong = counterfactual_pairs(run_dir)
+    cf_value = auc(cf_pairs) if cf_pairs else None
+    cf_interval = (
+        _bootstrap(cf_pairs, auc, resamples, seed) if cf_value is not None else None
+    )
+    if cf_value is not None and value is not None and cf_interval and interval:
+        if not (cf_interval[0] > 0.5):
+            notes.append(
+                "the answer-bearing veto does not lift the score off chance "
+                f"either ({value:.3f} -> {cf_value:.3f})"
+            )
+
     return ConfidenceDiagnostic(
         dataset=dataset,
         run_id=run_dir.name,
@@ -235,6 +347,8 @@ def diagnose(
         threshold=threshold,
         n_below=sum(1 for c, _ in pairs if c < threshold),
         n_above=sum(1 for c, _ in pairs if c >= threshold),
+        cf_auc=cf_value, cf_auc_ci=cf_interval,
+        cf_vetoed=cf_vetoed, cf_vetoed_wrong=cf_wrong,
         notes=notes,
     )
 
@@ -279,6 +393,12 @@ def render_table(rows: Sequence[ConfidenceDiagnostic]) -> str:
         r"means the loop is choosing which questions to retry without regard "
         r"to whether they needed retrying. Intervals are 95\% "
         r"percentile bootstraps over questions. "
+        r"The final column replays the \texttt{answer\_bearing} correction over "
+        r"these same recorded verifications --- forcing the entailment term to "
+        r"zero wherever the answer does not appear in the sentence offered for "
+        r"it --- and re-blends. It measures whether the \emph{score} would "
+        r"separate better, not what the loop would then do: a changed verdict "
+        r"re-plans, and a replay cannot generate the answer that would follow. "
         r"\textbf{This is a diagnostic, not a calibration.} It is computed on "
         r"the evaluation slice, because that is where the ablation result it "
         r"explains was measured, and it selects no threshold, weight or other "
@@ -296,21 +416,19 @@ def render_table(rows: Sequence[ConfidenceDiagnostic]) -> str:
         f"  \\caption{{{caption}}}",
         r"  \label{tab:confidence-diagnostic}",
         r"  \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%",
-        r"  \begin{tabular}{lrrrrrr}",
+        r"  \begin{tabular}{lrrrrrrr}",
         r"    \toprule",
         r"    Dataset & $n$ & Base rate & Mean conf. & AUC [95\% CI] & ECE "
-        r"& Trigger gap [95\% CI] \\",
+        r"& Trigger gap [95\% CI] & AUC with veto [95\% CI] \\",
         r"    \midrule",
     ]
     for row in rows:
+        gap = (f"{row.gap:+.3f} {_ci(row.gap_ci)}" if row.gap is not None else "--")
         lines.append(
             f"    \\texttt{{{row.dataset}}} & {row.n} & {_fmt(row.base_rate)} & "
             f"{_fmt(row.mean_confidence)} & {_fmt(row.auc)} {_ci(row.auc_ci)} & "
-            f"{_fmt(row.ece)} & {row.gap:+.3f} {_ci(row.gap_ci)} \\\\"
-            if row.gap is not None else
-            f"    \\texttt{{{row.dataset}}} & {row.n} & {_fmt(row.base_rate)} & "
-            f"{_fmt(row.mean_confidence)} & {_fmt(row.auc)} {_ci(row.auc_ci)} & "
-            f"{_fmt(row.ece)} & -- \\\\"
+            f"{_fmt(row.ece)} & {gap} & "
+            f"{_fmt(row.cf_auc)} {_ci(row.cf_auc_ci)} \\\\"
         )
     lines += [r"    \bottomrule", r"  \end{tabular}}", r"\end{table}", ""]
     return "\n".join(header + lines)

@@ -19,9 +19,17 @@
     "threshold": 0.55,
     "n_below": 87,
     "n_above": 163,
+    "cf_auc": 0.5413732394366197,
+    "cf_auc_ci": [
+      0.4703389830508475,
+      0.6130666666666666
+    ],
+    "cf_vetoed": 27,
+    "cf_vetoed_wrong": 14,
     "notes": [
       "the AUC interval contains 0.5, so the signal cannot be shown to rank correct answers above incorrect ones",
-      "the re-plan trigger selects questions whose accuracy is indistinguishable from the accuracy of the ones it accepts"
+      "the re-plan trigger selects questions whose accuracy is indistinguishable from the accuracy of the ones it accepts",
+      "the answer-bearing veto does not lift the score off chance either (0.538 -> 0.541)"
     ]
   },
   {
@@ -44,9 +52,17 @@
     "threshold": 0.55,
     "n_below": 55,
     "n_above": 195,
+    "cf_auc": 0.4989874815905744,
+    "cf_auc_ci": [
+      0.41521332150950835,
+      0.5895493395493395
+    ],
+    "cf_vetoed": 41,
+    "cf_vetoed_wrong": 33,
     "notes": [
       "the AUC interval contains 0.5, so the signal cannot be shown to rank correct answers above incorrect ones",
-      "the re-plan trigger selects questions whose accuracy is indistinguishable from the accuracy of the ones it accepts"
+      "the re-plan trigger selects questions whose accuracy is indistinguishable from the accuracy of the ones it accepts",
+      "the answer-bearing veto does not lift the score off chance either (0.513 -> 0.499)"
     ]
   }
 ]

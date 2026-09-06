@@ -370,6 +370,46 @@ be doing measurable damage. The graph is the one component whose reading did
 not change, a null both times --- and given what happened to the other two,
 the only one that can now be called settled.
 
+\textbf{The runs are not exactly reproducible, and the report has an error bar
+it did not report.} Every interval in this document is a paired bootstrap over
+questions. That answers one question --- what if a different 250 had been
+sampled --- and is silent about another: what does the same system do on the
+same questions when it is simply run again. With a decoding temperature of
+0.0 and a fixed seed the intended answer was ``nothing''.
+
+\input{../results/tables/replication.tex}
+
+Table~\ref{tab:replication-drift} shows it is not nothing.
+\texttt{agentic\_no\_verifier} was re-run on the identical HotpotQA slice ---
+a configuration with no verifier, and therefore no feedback loop whose
+stochasticity could be blamed --- and exact match moved by $0.012$, F1 by
+$0.014$, with 15 of the 250 answers changing. Thirteen of those fifteen also
+drew a \emph{different evidence pool}, which locates the divergence in
+retrieval rather than in generation.
+
+The cause is recorded in the runs' own metadata. \texttt{meta.json} stores
+\texttt{seeding.pythonhashseed}: it is \texttt{null} for the evaluated grid
+and \texttt{0} for the re-run. Python randomises string hashing per process
+unless that variable is set, the evidence pool is assembled from sets, and set
+iteration order follows the hash. The CLI sets the variable; the harness
+invoked directly inherits whatever the environment had, which for the
+evaluated grid was nothing. Every number in this report therefore comes from
+one execution of a pipeline whose retrieval order was not pinned.
+
+The consequence is stated rather than buried, because it changes how three
+rows should be read. An effect smaller than roughly $0.014$ F1 is not
+established by a single execution. That leaves the planner ablation on
+2WikiMultihopQA ($+0.121$) and the verifier ablation on HotpotQA ($-0.037$)
+comfortably clear of the drift --- nine times and two and a half times it
+respectively --- and puts the knowledge graph's $-0.009$ and $+0.018$, and the
+verifier's $-0.001$ on 2WikiMultihopQA, inside it. Those three were reported
+as nulls and remain nulls; what this rules out is reading any of them as a
+small real effect in either direction. It also means the confidence intervals
+elsewhere are narrower than the true uncertainty, since they hold the
+execution fixed. Pinning \texttt{PYTHONHASHSEED} in the harness and re-running
+the grid is a half-day of compute and the first thing a continuation of this
+work should do.
+
 \textbf{Model scale.} Every result is conditional on a 4-bit quantised 8B model.
 The planner findings in particular are unlikely to transfer: a frontier model
 would probably label its own strategy correctly, making the DAG-derived override

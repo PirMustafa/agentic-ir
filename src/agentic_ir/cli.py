@@ -80,7 +80,11 @@ def _numeric_id(sq_id: str) -> tuple[int, str]:
 # Determinism (architecture section 9)
 # ---------------------------------------------------------------------------
 
-def ensure_hash_seed(seed: int = HASH_SEED, argv: Sequence[str] | None = None) -> int | None:
+def ensure_hash_seed(
+    seed: int = HASH_SEED,
+    argv: Sequence[str] | None = None,
+    module: str = "agentic_ir.cli",
+) -> int | None:
     """Guarantee ``PYTHONHASHSEED``, re-executing the interpreter if need be.
 
     Assigning to ``os.environ["PYTHONHASHSEED"]`` inside a live process changes
@@ -89,6 +93,12 @@ def ensure_hash_seed(seed: int = HASH_SEED, argv: Sequence[str] | None = None) -
     remember to set it -- which is exactly the kind of step that gets forgotten
     on the day the numbers are generated -- or to re-exec once with it set. This
     does the latter.
+
+    ``module`` is the entry point to re-exec into. It exists because
+    ``eval/run_eval.py`` is a second entry point that needs the same guarantee:
+    the evaluated grid was launched through it, and every ``meta.json`` in that
+    grid consequently records ``pythonhashseed: null``. Re-execing into the
+    wrong module would silently run a different command.
 
     Returns ``None`` when nothing was needed (already set, or the guard is in
     place); on Windows it returns the child's exit code, and on POSIX it never
@@ -101,7 +111,7 @@ def ensure_hash_seed(seed: int = HASH_SEED, argv: Sequence[str] | None = None) -
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = want
     env[_REEXEC_GUARD] = "1"
-    args = [sys.executable, "-m", "agentic_ir.cli", *(argv if argv is not None else sys.argv[1:])]
+    args = [sys.executable, "-m", module, *(argv if argv is not None else sys.argv[1:])]
 
     if os.name == "nt":
         # execv on Windows detaches the console from the surviving process and

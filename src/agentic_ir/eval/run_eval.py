@@ -1372,4 +1372,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Pin PYTHONHASHSEED before anything else, exactly as ``cli.py`` does for
+    # ``cli eval``. Without this the two entry points are not the same
+    # experiment: hash randomisation changes set iteration order, the evidence
+    # pool is built from sets, and the pool decides the answer. Measured
+    # consequence of the omission, on an identical configuration re-run: 15 of
+    # 250 answers changed, 13 of them with a different evidence pool, moving
+    # exact match by 0.012 -- see results/tables/replication.tex. Every run of
+    # the evaluated grid was launched this way, which is why every meta.json in
+    # it records ``pythonhashseed: null``.
+    import sys as _sys
+
+    from ..cli import ensure_hash_seed
+
+    code = ensure_hash_seed(module="agentic_ir.eval.run_eval", argv=_sys.argv[1:])
+    raise SystemExit(code if code is not None else main())
