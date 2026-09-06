@@ -189,7 +189,26 @@ python -m agentic_ir.cli ask "Which magazine was started first, Arthur's Magazin
 
 # Full evaluation across all configurations
 python -m agentic_ir.eval.run_eval --dataset hotpotqa --config agentic_full
+
+# Regenerate every table in the report from the runs on disk
+python -m agentic_ir.cli tables
 ```
+
+### Guided walkthrough
+
+```bash
+python scripts/demo.py            # all six sections
+python scripts/demo.py --list     # what they are
+python scripts/demo.py --section 4
+```
+
+No GPU, no model server, no network: the walkthrough replays evaluation runs
+that already happened and reads the state machine out of `orchestrator.py`, so
+every number it prints can be checked against the file named beside it. The six
+sections are the corpora and models, the architecture and its transition table,
+one question traced end to end, the re-plan loop firing and recovering a wrong
+answer, the results with their negative findings, and the commands for running
+it live.
 
 ## Evaluation design
 
@@ -214,6 +233,7 @@ the report says so.
 ```
 config/config.yaml         Every tunable knob; values referenced in the report
 scripts/                   Data download, corpus construction, index building
+scripts/demo.py            Guided walkthrough; replays real runs, needs no GPU
 src/agentic_ir/
   ├── agents/              Planner · Retriever · KG Navigator · Verifier · Synthesizer
   ├── tools/               Tool registry exposed to the Retrieval agent
@@ -233,8 +253,26 @@ docs/assignment-brief.md   The original assignment specification
 - [x] **M2** — Planner and Retrieval agents
 - [x] **M3** — KG Navigator
 - [x] **M4** — Verifier and the re-plan feedback loop
-- [ ] **M5** — Full evaluation, ablations, result tables *(harness ready; runs pending)*
-- [ ] **M6** — Report Chapters 1 & 5, final PDF
+- [x] **M5** — Full evaluation, ablations, result tables *(complete on HotpotQA; the
+      2WikiMultihopQA ablation column is still running and every table marks the rows
+      that are not final)*
+- [x] **M6** — Report Chapters 1–5, final PDF
+
+### Headline results
+
+On the frozen 250-question HotpotQA slice, against a `self_ask` reference:
+
+| | EM | F1 | Citation grounding | Median latency |
+|---|---|---|---|---|
+| `self_ask` | 0.504 | 0.603 | 0.000 | 4.5 s |
+| `agentic_full` | 0.432 | 0.510 | **0.960** | 28.3 s |
+
+The system **loses** on answer accuracy — ΔF1 −0.093 [−0.145, −0.039], significant —
+and wins on attribution and evidence recall. The re-plan loop is worth 3.7 F1 points
+(ΔF1 −0.037 [−0.065, −0.011], *p* = 0.008 when removed), while removing the planner or
+the knowledge graph costs nothing measurable on two-hop questions. All three are
+reported as findings rather than smoothed; see `docs/report-audit.md` for the
+integrity audit that produced these corrections.
 
 ## License
 
