@@ -149,14 +149,29 @@ $[-0.065, -0.011]$ and $p = 0.008$. The loop that fires on nearly half the
 questions does improve the aggregate, by just under four F1 points, at a cost
 of roughly doubling the model calls, 4.26 against 2.06, and the median
 latency, 28.3\,s against 16.5\,s. That is the claim the architecture was built
-to test, it is measured rather than asserted, and it lands in the direction
-the design predicted. It also has to be held at its true size. It is a
-single-dataset result, and the report's own standard is that one dataset does
-not settle a direction; the 2WikiMultihopQA ablation has not been run and is
-the measurement that would make the finding a general one. And it is a
+to test, it is measured rather than asserted, and on HotpotQA it lands in the
+direction the design predicted.
+
+On 2WikiMultihopQA it does not. The same ablation over that dataset's 250
+questions scores an exact match of 0.216 and F1 of 0.266 against the full
+system's 0.224 and 0.267: a paired $\Delta$F1 of $-0.001$, $[-0.025, +0.025]$,
+$p = 1.000$. The loop was not idle there --- it ran on 98 of the 250 questions
+and a later cycle was selected on 64 --- and it charged the same price, 3.80
+model calls against 2.03 and a median of 35.4\,s against 18.4\,s. It simply
+bought nothing the evaluation can detect. Chapter~\ref{ch:implementation}
+gives the two readings the grid permits: that a system at F1 0.267 is failing
+for reasons a second attempt at the same corpus cannot repair, and that
+2WikiMultihopQA's comparison templates defeat an entailment check that reads
+one answer sentence. The ablated system being \emph{better} attributed there
+--- SP-F1 0.465 against 0.421 --- supports the second.
+
+So the finding is conditional, and this report states it conditionally: the
+backward edge helps on HotpotQA and not on 2WikiMultihopQA. The report's own
+standard is that one dataset does not settle a direction, and having now run
+the second, the honest conclusion is that the two disagree. It is also a
 statement about the edge, not about the system: a verifier that adds four
-points to an answer accuracy that is itself nine points behind
-\texttt{self\_ask} has proved that feedback helps, not that this system is
+points on one dataset to an answer accuracy that is itself nine points behind
+\texttt{self\_ask} has proved that feedback can help, not that this system is
 the one to deploy.
 
 The planner ablation, complete on HotpotQA at the same time, produced the
@@ -294,15 +309,15 @@ effect sizes --- nothing here should be read as a precise one --- but
 significance is decided by the paired column and not by overlap. The grid is
 also not finished. The ablations run against the same 250-question evaluation
 split rather than a subsample; at the time of writing the six baseline and
-full-system configurations are complete on both datasets and all three
-ablations are complete on HotpotQA, while on 2WikiMultihopQA
-\texttt{agentic\_no\_verifier} was still in flight when the tables were last
-generated and \texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg} had
-not started. Every ablation conclusion in this report is therefore a
-one-dataset conclusion: the backward edge's contribution is a single positive
-number, the planner's a single null pointing the wrong way, and the graph's a
-single null. Each is marked so where it is due, and none of the three is
-general until the 2WikiMultihopQA column exists.
+full-system configurations are complete on both datasets, all three ablations
+are complete on HotpotQA, and on 2WikiMultihopQA \texttt{agentic\_no\_verifier}
+is complete while \texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg}
+had not started. The verifier ablation is therefore the only one measured
+twice, and the two measurements disagree --- which is precisely why the
+planner's and the graph's single nulls are not treated here as settled either.
+A component that looked significant on HotpotQA turned out to do nothing on
+2WikiMultihopQA; the two that looked like nulls on HotpotQA have not yet had
+the chance to do the reverse.
 
 \textbf{Model scale.} Every result is conditional on a 4-bit quantised 8B model.
 The planner findings in particular are unlikely to transfer: a frontier model

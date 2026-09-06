@@ -619,3 +619,38 @@ silently if a caption ever stops naming one.
 Sentences that depend on the rows still open are now confined to `ch4`
 (Ablation Study, 2WikiMultihopQA paragraph) and `ch5` (Empirical Findings,
 Limitations), and each says so.
+
+### 10.6 The verifier ablation on 2WikiMultihopQA does not replicate
+
+`agentic_no_verifier_twowiki_20260906T103608Z` completed at 250. The central
+claim of the report does not hold on the second dataset:
+
+| | HotpotQA | 2WikiMultihopQA |
+|---|---|---|
+| `agentic_full` EM / F1 | 0.432 / 0.510 | 0.224 / 0.267 |
+| `agentic_no_verifier` EM / F1 | 0.396 / 0.474 | 0.216 / 0.266 |
+| paired dF1 | **-0.037 [-0.065, -0.011], p = 0.008** | **-0.001 [-0.025, +0.025], p = 1.000** |
+| model calls, full vs ablated | 4.26 vs 2.06 | 3.80 vs 2.03 |
+| median latency, full vs ablated | 28.3s vs 16.5s | 35.4s vs 18.4s |
+
+It is not a failure to fire. On 2WikiMultihopQA the loop ran on 98 of 250
+questions and a later cycle was selected on 64, so the mechanism executed on
+more than a third of the dataset and moved the aggregate by one thousandth of
+an F1 point at roughly double the cost.
+
+Note also that the ablated system is BETTER attributed on 2WikiMultihopQA:
+SP-precision 0.612 against 0.558, SP-F1 0.465 against 0.421. The extra cycles
+add evidence that dilutes the cited set rather than sharpening it.
+
+**Rewritten in consequence:** `main.tex` abstract (the backward-edge sentence
+now carries both datasets and the word "conditional"), `ch4` Ablation Study
+(new paragraph stating the disagreement and the two readings the grid
+permits), `ch5` Empirical Findings (same, plus the "one dataset does not
+settle a direction" sentence inverted -- the second dataset was run and the
+two disagree), and `ch5` Limitations (the completeness paragraph now says the
+verifier is the only component measured twice, and that this is why the
+planner's and graph's single nulls are not treated as settled either).
+
+The honest headline is the conditional one: **the backward edge helps on
+HotpotQA and not on 2WikiMultihopQA.** Anything stronger reads one row and
+ignores the other.

@@ -484,17 +484,16 @@ the backward edge, leaving a system that plans and retrieves in multiple steps
 but never revisits its own answer; the difference between it and the full
 system is the contribution of this project, measured rather than asserted.
 
-The study is complete on HotpotQA and still filling on 2WikiMultihopQA, and
+The study is complete on HotpotQA and half complete on 2WikiMultihopQA, and
 each row's sample size is printed so that no reader has to take that on trust.
 All three ablations --- \texttt{agentic\_no\_verifier},
 \texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg} --- have covered all
-250 HotpotQA questions, so every delta in Table~\ref{tab:ablations-hotpotqa}
-is a paired comparison on the identical question set. On 2WikiMultihopQA
-\texttt{agentic\_no\_verifier} was mid-run when these tables were generated,
-so it is marked preliminary and every delta, $p$-value and significance mark
-against it is withheld, and \texttt{agentic\_no\_planner} and
-\texttt{agentic\_no\_kg} render as \texttt{--}. Nothing below is concluded
-from a 2WikiMultihopQA ablation row.
+250 HotpotQA questions, and \texttt{agentic\_no\_verifier} has now covered all
+250 on 2WikiMultihopQA as well, so every delta in
+Tables~\ref{tab:ablations-hotpotqa} and~\ref{tab:ablations-twowiki} is a
+paired comparison on an identical question set. \texttt{agentic\_no\_planner}
+and \texttt{agentic\_no\_kg} on 2WikiMultihopQA render as \texttt{--} and
+nothing is concluded from them.
 
 The verifier ablation is the measurement this project exists to make, and it
 lands the way the architecture predicted. With the backward edge removed and
@@ -510,9 +509,42 @@ question against 2.06 without the verifier, and a median of 28.3\,s against
 four F1 points. Read with the error analysis below, which finds the Verifier
 far more often too permissive than too strict, the result says the mechanism
 works when it fires and fires on a minority of the questions where it should.
-It is one dataset; the report's own standard elsewhere is that one dataset
-does not settle a direction, and the 2WikiMultihopQA row is the one this
-section is waiting for.
+
+Then 2WikiMultihopQA arrived, and it does not agree.
+\texttt{agentic\_no\_verifier} scores an exact match of 0.216 and F1 of 0.266
+against the full system's 0.224 and 0.267 --- a paired $\Delta$F1 of $-0.001$
+with a 95\% interval of $[-0.025, +0.025]$ and $p = 1.000$. That is as null as
+a result can be. It is not a failure to fire, either, which would be the
+comfortable explanation: the loop ran on 98 of the 250 questions and a later
+cycle was selected on 64 of them, so the machinery this project is about
+executed on more than a third of the dataset and changed the aggregate by one
+thousandth of an F1 point. The cost is unchanged: 3.80 model calls per
+question against 2.03, and a median of 35.4\,s against 18.4\,s. On this
+dataset the backward edge roughly doubles the bill and buys nothing the
+evaluation can detect.
+
+The two datasets therefore disagree about the central claim of this report,
+and the honest statement is the conditional one: \emph{the backward edge helps
+on HotpotQA and not on 2WikiMultihopQA}. Anything stronger would be reading
+one of the two rows and ignoring the other. Two readings of the disagreement
+are consistent with the rest of the grid. The first is a headroom argument:
+the full system reaches F1 0.510 on HotpotQA and 0.267 on 2WikiMultihopQA, so
+on the harder dataset it is failing for reasons a second attempt at the same
+plan cannot repair --- if the retrieval never contained the answer, re-planning
+around the same corpus returns to the same place. The second is that
+2WikiMultihopQA's comparison and bridge-comparison templates give the Verifier
+less to work with: its NLI check reads a single answer sentence, and a claim
+of the form ``A was born before B'' is entailed by neither operand's page
+alone, which the error analysis and Chapter~\ref{ch:conclusions} both take up.
+Supporting the second reading, the ablated system is \emph{better} attributed
+on 2WikiMultihopQA than the full one --- SP-precision 0.612 against 0.558 and
+SP-F1 0.465 against 0.421 --- so what the loop adds there is extra cycles whose
+evidence dilutes the cited set rather than sharpening it.
+
+What survives is narrower than what this section set out to show and is stated
+as such. The mechanism is real, it is measurable, and on one of two datasets
+it is worth just under four F1 points at roughly double the cost. It is not a
+general result, and one more dataset would not make it one.
 
 \begin{sloppypar}
 The planner ablation is the surprise, and it is reported as one rather than

@@ -14,7 +14,7 @@
 %   hotpotqa/naive_rag: naive_rag_hotpotqa_20260902T120313Z (250 questions)
 %   hotpotqa/self_ask: self_ask_hotpotqa_20260904T194457Z (250 questions)
 %   twowiki/agentic_full: agentic_full_twowiki_20260905T184526Z (250 questions)
-%   twowiki/agentic_no_verifier: agentic_no_verifier_twowiki_20260906T103608Z (16 questions)  PRELIMINARY: short of the 250-question evaluation slice; deltas and significance withheld
+%   twowiki/agentic_no_verifier: agentic_no_verifier_twowiki_20260906T103608Z (250 questions)
 %   twowiki/bm25_only: bm25_only_twowiki_20260902T113905Z (250 questions)
 %   twowiki/dense_only: dense_only_twowiki_20260902T113913Z (250 questions)
 %   twowiki/hybrid_rerank: hybrid_rerank_twowiki_20260904T184235Z (250 questions)
@@ -59,29 +59,29 @@
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \caption{Failure profile on \texttt{twowiki}. Labels are assigned post hoc by \texttt{eval/error\_analysis.py} from the trace and the gold supporting facts -- deterministically, first match wins -- in a cascade from ``the system never had a chance'' to ``it had everything it needed and still got it wrong''. \texttt{verifier\_false\_accept} and \texttt{verifier\_false\_reject} are counted again in the totals, independently of the cascade: the ordered label makes a false reject nearly unreachable, and it is the count that makes the Verifier$\rightarrow$Planner loop falsifiable. Corpus titles were loaded, so the \texttt{decomposition\_error} rule's ``gold facts exist in the corpus'' clause is checked rather than assumed. A configuration with no run has no column. \texttt{bm25\_only}, \texttt{dense\_only} and \texttt{hybrid\_rerank} emit no answer at all, so their \textit{Correct} is structurally $0$ and every question is counted as an error; the informative rows for them are the retrieval labels, not the accuracy. \textbf{$^{\ddagger}$ marks a preliminary row}: \texttt{agentic\_no\_verifier} ($n=16$) had not covered the full 250-question evaluation slice when this table was generated, so the point estimates are over the questions completed so far and every delta, $p$-value and significance mark against it is withheld -- a paired test between a prefix and the full slice is not a paired test. These numbers will move; they are not final results.}
+  \caption{Failure profile on \texttt{twowiki}. Labels are assigned post hoc by \texttt{eval/error\_analysis.py} from the trace and the gold supporting facts -- deterministically, first match wins -- in a cascade from ``the system never had a chance'' to ``it had everything it needed and still got it wrong''. \texttt{verifier\_false\_accept} and \texttt{verifier\_false\_reject} are counted again in the totals, independently of the cascade: the ordered label makes a false reject nearly unreachable, and it is the count that makes the Verifier$\rightarrow$Planner loop falsifiable. Corpus titles were loaded, so the \texttt{decomposition\_error} rule's ``gold facts exist in the corpus'' clause is checked rather than assumed. A configuration with no run has no column. \texttt{bm25\_only}, \texttt{dense\_only} and \texttt{hybrid\_rerank} emit no answer at all, so their \textit{Correct} is structurally $0$ and every question is counted as an error; the informative rows for them are the retrieval labels, not the accuracy.}
   \label{tab:error-analysis-twowiki}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
   \begin{tabular}{lrrrrrrr}
     \toprule
-    Label & \texttt{bm25\_only} & \texttt{dense\_only} & \texttt{hybrid\_rerank} & \texttt{naive\_rag} & \texttt{self\_ask} & \texttt{agentic\_full} & \texttt{agentic\_no\_verifier}$^{\ddagger}$ \\
+    Label & \texttt{bm25\_only} & \texttt{dense\_only} & \texttt{hybrid\_rerank} & \texttt{naive\_rag} & \texttt{self\_ask} & \texttt{agentic\_full} & \texttt{agentic\_no\_verifier} \\
     \midrule
     \multicolumn{8}{@{}l}{\textit{Failure labels: count (share of all questions)}} \\
     \texttt{parse\_failure} & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) \\
     \texttt{budget\_exhausted} & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) \\
     \texttt{retrieval\_miss} & 4 (0.016) & 0 (0.000) & 1 (0.004) & 1 (0.004) & 1 (0.004) & 1 (0.004) & 0 (0.000) \\
     \texttt{decomposition\_error} & 147 (0.588) & 144 (0.576) & 138 (0.552) & 124 (0.496) & 48 (0.192) & 22 (0.088) & 0 (0.000) \\
-    \texttt{bridge\_link\_failure} & 45 (0.180) & 49 (0.196) & 50 (0.200) & 42 (0.168) & 81 (0.324) & 7 (0.028) & 1 (0.062) \\
-    \texttt{synthesis\_error} & 36 (0.144) & 45 (0.180) & 46 (0.184) & 34 (0.136) & 19 (0.076) & 59 (0.236) & 2 (0.125) \\
+    \texttt{bridge\_link\_failure} & 45 (0.180) & 49 (0.196) & 50 (0.200) & 42 (0.168) & 81 (0.324) & 7 (0.028) & 9 (0.036) \\
+    \texttt{synthesis\_error} & 36 (0.144) & 45 (0.180) & 46 (0.184) & 34 (0.136) & 19 (0.076) & 59 (0.236) & 59 (0.236) \\
     \texttt{verifier\_false\_accept} & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 82 (0.328) & 0 (0.000) \\
     \texttt{verifier\_false\_reject} & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) & 0 (0.000) \\
     \addlinespace
     \multicolumn{8}{@{}l}{\textit{Totals}} \\
-    Questions scored & 250 & 250 & 250 & 250 & 250 & 250 & 16 \\
-    Correct & 0 & 0 & 0 & 38 & 66 & 56 & 2 \\
-    Accuracy & 0.000 & 0.000 & 0.000 & 0.152 & 0.264 & 0.224 & 0.125 \\
-    Errors & 250 & 250 & 250 & 212 & 184 & 194 & 14 \\
-    Errors with no rule firing & 18 & 12 & 15 & 11 & 35 & 23 & 11 \\
+    Questions scored & 250 & 250 & 250 & 250 & 250 & 250 & 250 \\
+    Correct & 0 & 0 & 0 & 38 & 66 & 56 & 54 \\
+    Accuracy & 0.000 & 0.000 & 0.000 & 0.152 & 0.264 & 0.224 & 0.216 \\
+    Errors & 250 & 250 & 250 & 212 & 184 & 194 & 196 \\
+    Errors with no rule firing & 18 & 12 & 15 & 11 & 35 & 23 & 128 \\
     Verifier false accepts & 0 & 0 & 0 & 0 & 0 & 154 & 0 \\
     Verifier false rejects & 0 & 0 & 0 & 0 & 0 & 5 & 0 \\
     Recoverable (some cycle was right) & 0 & 0 & 0 & 0 & 0 & 5 & 0 \\

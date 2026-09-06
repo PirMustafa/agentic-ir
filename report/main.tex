@@ -64,9 +64,12 @@ measured. On answer accuracy the agentic system does not lead: exact match is
 0.432 on HotpotQA and 0.224 on 2WikiMultihopQA against 0.504 and 0.264 for a
 self-ask baseline that decomposes but never verifies, a deficit that is
 significant on HotpotQA under the paired bootstrap and not on 2WikiMultihopQA.
-The backward edge itself is nonetheless doing measurable work: removing it,
-with everything else held fixed, changes HotpotQA F1 by $-0.037$
-$[-0.065, -0.011]$, a significant loss. On attribution the agentic system is not more accurate but
+The backward edge does measurable work on one of the two datasets and none on
+the other: removing it, with everything else held fixed, changes HotpotQA F1
+by $-0.037$ $[-0.065, -0.011]$, a significant loss, and 2WikiMultihopQA F1 by
+$-0.001$ $[-0.025, +0.025]$, $p = 1.000$ --- though it fired on 98 of those
+250 questions and charged the same doubled cost. The contribution is therefore
+reported as conditional rather than general. On attribution the agentic system is not more accurate but
 differently accountable. Its supporting-fact F1 of 0.481 and 0.421 exceeds the
 strongest retrieval baseline's 0.412 and 0.327 significantly, and it is scored
 on the sentences it actually cited, at a citation grounding of 0.960 and 0.976
