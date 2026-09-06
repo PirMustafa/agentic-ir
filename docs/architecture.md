@@ -1,7 +1,7 @@
 # Architecture and Interface Specification
 
 **Project:** Agentic AI for Information Retrieval · Student ID D03000104
-**Status:** design frozen at M0. This document is the contract; `config/config.yaml` is the source of truth for values.
+**Status:** written as the M0 contract, and since reconciled against the implementation. Where the built system diverged from the design the divergence is recorded here rather than quietly edited away — §3.0c (the response cache that was never built), §1.10 (the per-cycle state defect), §7 (the `llm/` package that became one module) and §10 (which risks materialised). `config/config.yaml` remains the source of truth for values, with the ten exceptions in §8.1 that live in code.
 **Scope:** what a coder needs to implement M1–M5 without guessing.
 
 ---
@@ -15,7 +15,7 @@ These are load-bearing. Every later decision follows from them.
 3. **Graceful degradation has a floor, and the floor is a working baseline.** If the Planner LLM fails completely, the plan degenerates to a single sub-query equal to the question, routed to `hybrid_search`+rerank. That is exactly the `hybrid_rerank` baseline. The agentic system can therefore never score *below* its strongest non-agentic baseline for reasons of infrastructure failure — only for reasons of judgement. This is worth a sentence in Chapter 4.
 4. **Budget is checked, never thrown.** `Budget.try_spend_llm()` returns `bool`. Agents branch to their fallback when it returns `False`. No exception-driven control flow for budget.
 5. **Determinism by construction.** Every sort has a tiebreaker. Every set is converted to a sorted tuple before it leaves a function. Every prompt is a versioned file whose SHA-1 is logged.
-6. **Local only.** No module may import `requests`, `httpx`, or `openai` except the Ollama client, which talks to `http://localhost:11434` and nothing else. Enforce with a test (`tests/test_no_network.py`) that greps the source tree.
+6. **Local only.** No module may import `requests`, `httpx`, or `openai` except the Ollama client, which talks to `http://localhost:11434` and nothing else. Enforced by `tests/test_guards.py`, which greps the source tree — `test_no_network_libraries_outside_the_llm_client` and `test_no_hosted_llm_provider_anywhere`. (The design named a separate `tests/test_no_network.py`; all five source-grepping guards ended up in one file instead.)
 
 ---
 
@@ -379,8 +379,12 @@ class QuestionState:
 `kg_results`, `answers` and `bridge_entities` are keyed by `subquery_id`, and every plan
 revision numbers its nodes from `q1`. A re-plan's `q1` therefore **overwrites** cycle 0's
 `q1`, while any id the new plan does not reuse **survives stale** from the earlier cycle.
-In `agentic_full_hotpotqa_20260904T221533Z`, 118 of 250 questions re-planned; 115 of
-those lost their cycle-0 retrieval results and 92 carry at least one stale id. Two
+In `agentic_full_hotpotqa_20260904T221533Z`, 118 of 250 questions re-planned; **all 118**
+had at least one cycle-0 id reused by a later plan, so cycle 0's results for that id were
+overwritten, and **92** end with at least one entry in `retrieved` whose key the final
+plan does not use — a result carried over from a superseded cycle. (An earlier draft said
+115 for the first figure. It reproduces to 118 under every definition tried; 92 reproduces
+exactly under the definition just stated, which is why that one is spelled out.) Two
 consequences: (i) the retrieval metrics for re-planned questions are computed over a
 last-cycle-plus-stale pool, not over everything the question retrieved; (ii) the trace
 is **not** the complete audit record §1.3 promises — `plans` is immutable and complete,
@@ -391,13 +395,15 @@ have `AGGREGATE` pool over all cycles while `EXECUTE` resolves placeholders agai
 current one only. The fix changes what `AGGREGATE` sees and therefore the numbers; it
 belongs to a re-run, not to a table regeneration. Reported in the Chapter 5 limitations.
 
-`gold` is carried on the state but **no agent may read it**. Enforce with a test that greps `agents/` for `state.gold`. Cheap insurance against accidental leakage that would invalidate every number in the report.
+`gold` is carried on the state but **no agent may read it**. Enforced by `tests/test_guards.py::test_agents_never_read_gold`, which greps `agents/` for `state.gold`. Cheap insurance against accidental leakage that would invalidate every number in the report.
 
 ---
 
 ## 2. Orchestrator state machine
 
 `src/agentic_ir/orchestrator.py`. Explicit state machine, not implicit control flow — the professor wants the mechanism visible, and an explicit machine is directly drawable as a TikZ figure in Chapter 4.
+
+**Nine states and fifteen transitions**, and both are data rather than prose: `STATES` is a 9-tuple and `TRANSITIONS` is a 15-entry `dict[str, tuple[from, to, guard]]`, both exported from `orchestrator.py`, so §2.2 below is checkable against the module rather than trusted. The count is fifteen and not fourteen because `T2b` is a second edge out of `PLAN` and does not renumber the `T1..T14` sequence; the module docstring says "fourteen" and is undercounting it. `_MAX_MACHINE_STEPS = 400` is an outer stop against a mis-wired handler, not a budget.
 
 ### 2.1 Diagram
 
@@ -559,7 +565,14 @@ Implemented in `src/agentic_ir/llm.py` (see the deviation note in §7).
 
 No `eval`, no `ast.literal_eval`, no regex-based JSON "fixing" beyond rung 4. Schema validation is hand-written per agent (no pydantic — not in `requirements.txt`).
 
-**(c) Response cache.** `data/cache/llm_cache.sqlite` via stdlib `sqlite3`. Key = `sha256(model | sorted(options) | prompt_id | rendered_prompt)`. This gives exact reproducibility of a completed run and turns re-runs (which *will* happen, repeatedly, while debugging the eval harness) from hours into seconds. Report `llm_calls` as *logical* calls and `llm_cache_hits` separately; **latency figures in the report must come from a cold-cache run**, and the harness must record `cache_cold: true/false` in `meta.json` so this cannot be fudged by accident.
+**(c) Response cache — designed, never built.** The original design called for `data/cache/llm_cache.sqlite` keyed on `sha256(model | sorted(options) | prompt_id | rendered_prompt)`, to make a completed run exactly reproducible and to turn eval-harness re-runs from hours into seconds. **It does not exist.** There is no sqlite cache anywhere in `src/`; `cache_hit` is `False` on all 1065 calls of the headline run, and `run_eval.py` reads `llm.cache` only to record cache coldness in `meta.json`. The config key and its `path` are kept so `cache_cold` keeps its meaning, and `config/config.yaml` says so at the declaration.
+
+Two consequences, both of which the report depends on and Chapter 4 states:
+
+* Every latency figure in the report is a **cold** measurement. That is what the report needs — a cached latency would measure the cache, not the system — so the absence costs nothing here.
+* Re-runs are **not** free, and a completed run is not bit-reproducible by replay. See risk 7.
+
+`llm_calls` is therefore a count of real calls, and `llm_cache_hits` is structurally zero rather than merely low.
 
 ---
 
@@ -758,7 +771,7 @@ Citations are set to the evidence actually used, so citation grounding stays mea
 1. **Citation resolution.** Cited ids not present in the evidence map → `hallucinated_citations`; they contribute 0 support. (This alone catches a real and common local-model failure.)
 2. **NLI.** `cross-encoder/nli-deberta-v3-base`, premise = each cited evidence sentence, hypothesis = `answer_sentence`. `nli_support = max P(entailment)`. Additionally score the top-5 *uncited* evidence sentences; any with `P(contradiction) > 0.7` are recorded in `contradictions`.
 3. **Signals.**
-   - `citation_grounding` = |claims with ≥1 non-hallucinated, non-contradicted supporting citation| / |claims|
+   - `citation_grounding` = |claims with ≥1 non-hallucinated, non-contradicted supporting citation| / |claims|. The Synthesizer emits one `answer_sentence`, so the implementation builds exactly one claim (`c1`) and this signal is **binary in practice**: 1.0 when at least one resolved citation survives the contradiction screen, 0.0 otherwise. Read the reported grounding rate as "the share of questions with at least one surviving citation", not as a per-claim average — nothing in the pipeline currently produces a second claim.
    - `retrieval_agreement` = fraction of executed sub-queries whose top-1 passage title appears among cited evidence titles
 4. **Confidence blend** (weights in config, `agents.verifier.weights`):
 
@@ -767,7 +780,17 @@ Citations are set to the evidence actually used, so citation grounding stays mea
    ```
 
    When the LLM term is skipped, drop it and renormalise the remaining weights to sum to 1.
-5. **Adjudication gate.** Compute `conf` with the LLM term omitted. Issue `verifier.adjudicate.v1` **only if** `|conf − 0.55| ≤ uncertainty_band` (0.15), i.e. `conf ∈ [0.40, 0.70]`. Confident accepts and confident rejects never spend a call. Expect this to skip the call on the majority of questions.
+5. **Adjudication gate.** Compute `conf` with the LLM term omitted, then walk five rungs in order; the first that fires skips the call and is recorded as `adjudication_skipped`:
+
+   | Rung | Skip reason | Why it is cheaper than the band |
+   |---|---|---|
+   | 1 | `method_nli_only` | `verifier.method: nli` never adjudicates |
+   | 2 | `empty_answer` | nothing to adjudicate |
+   | 3 | `synthesizer_insufficient` | `sufficient: false` is already a re-plan trigger (§3.4); a call would buy nothing |
+   | 4 | `outside_uncertainty_band` | `\|conf − 0.55\| > 0.15`, i.e. `conf ∉ [0.40, 0.70]` — a confident accept or a confident reject |
+   | 5 | `budget_exhausted` | no privileged calls left |
+
+   Only rungs 1–4 count as a *saved* call (`budget.note_saved()`). Rung 5 is a call the budget refused, not one the gate declined, and conflating the two would overstate the efficiency claim in the results table — which is why the code distinguishes them.
 6. **Verdict.** `conf ≥ 0.55` → `accept`. `conf < 0.55` and re-plans remain → `revise`. `conf < 0.55` and none remain → `abstain` (the best candidate is still returned; abstention is a label, not a refusal — EM/F1 must still be computable).
 
 **Adjudication schema:**
@@ -1044,103 +1067,117 @@ That last row is the one that makes the feedback loop falsifiable. Report it.
 ```
 src/agentic_ir/
   types.py                   ALL dataclasses (§1). No imports from siblings.
-  config.py                  exists
+  config.py                  dotted-path reader over config.yaml; frozen at load
   state.py                   QuestionState, Budget, step() context manager
   trace.py                   JSONL writer, meta.json, metrics.csv
   llm.py                     Ollama client, think-stripping, JSON ladder, CallLedger
-  prompts/
+  prompts/                   seven templates; see the note on the eighth
     planner.decompose.v1.txt   planner.replan.v1.txt
-    retriever.select_tool.v1.txt
     extract.span.v1.txt        kg.link_entities.v1.txt
     synth.answer.v1.txt        verifier.adjudicate.v1.txt
     repair.json.v1.txt
   agents/
     base.py  planner.py  retriever.py  kg_navigator.py  synthesizer.py  verifier.py
   tools/
-    registry.py  search_tools.py  kg_tools.py
+    registry.py
   indexing/
     corpus.py  bm25_index.py  dense_index.py  hybrid.py  rerank.py
   kg/
     build.py  graph.py  entity_link.py  traverse.py
   baselines/
-    bm25_only.py  dense_only.py  hybrid_rerank.py  naive_rag.py  self_ask.py
+    base.py  bm25_only.py  dense_only.py  hybrid_rerank.py  naive_rag.py  self_ask.py
   eval/
-    metrics.py  bootstrap.py  run_eval.py  error_analysis.py  tables.py
+    metrics.py  bootstrap.py  run_eval.py  error_analysis.py  tables.py  calibrate.py
   orchestrator.py
   cli.py
 scripts/
   download_data.py  build_corpus.py  build_indexes.py  build_kg.py  sample_eval_set.py
+  demo.py  dashboard.py  dashboard.html
 ```
 
-> **Deviation from the original design.** The spec first proposed an `llm/` package
+> **Three deviations from the original design**, recorded rather than edited away.
+>
+> **1. `llm/` became `llm.py`.** The spec first proposed a package
 > (`ollama_client.py`, `json_parse.py`, `registry.py`). The implementation is a single
-> `llm.py` module that provides the same surface — `OllamaClient`, `CallLedger`,
-> the extraction ladder, and `get_client()`. It is implemented and tested, so the
-> layout above records what exists rather than what was first drawn. Prompt templates
-> live in `src/agentic_ir/prompts/` accordingly.
+> module providing the same surface — `OllamaClient`, `CallLedger`, the extraction
+> ladder, and `get_client()`. It is implemented and tested. Prompt templates live in
+> `src/agentic_ir/prompts/` accordingly.
+>
+> **2. `tools/search_tools.py` and `tools/kg_tools.py` do not exist.** `registry.py`
+> holds the `ToolSpec` table and the callables together. Nothing was lost — the
+> single-source property §3.2 relies on (registry descriptions are the LLM-facing
+> tool documentation) is a property of `registry.py`, not of the split.
+>
+> **3. `retriever.select_tool.v1.txt` was never externalised.** Seven of the eight
+> prompt ids are files; this one is an inline template in `retriever.py`
+> (`_SELECT_TOOL_INSTRUCTIONS`), and `_render_select_prompt` reads the file only *if*
+> it exists, falling back to the inline string. That keeps the §5.1 honest-comparison
+> ablation runnable either way, but it is a real gap in §9's versioning discipline:
+> an inline prompt can be edited without a `.v1 → .v2` bump, and the shipped
+> configuration never issues this call anyway (`heuristic_shortcut: true`), so a
+> silent edit would surface only in the ablation. Externalise it before running that
+> comparison for the report.
 
 **Import discipline:** `types.py` imports nothing from the package. `agents/*` import `types`, `llm`, `tools`, `state` — never each other, never `orchestrator`. `orchestrator` imports everything. This keeps every agent unit-testable with a stub LLM.
 
 ---
 
-## 8. Configuration additions required
+## 8. Configuration
 
-`config/config.yaml` needs these keys added. Defaults chosen so current behaviour is unchanged where a key is absent.
+Every key this section once listed as "to be added" is now present in `config/config.yaml`, with the values §2.6, §3.5, §5.2 and §5.5 assume: `llm.think: false`, `llm.cache` (declared, unimplemented — §3.0c), `agents.planner.template_shortcut: false`, `agents.retriever.{multi_query, max_rewrites, rerank_margin_gate}`, `agents.verifier.{max_evidence, uncertainty_band, weights}`, `orchestrator.{reserve_llm_calls, answer_selection}` and the `trace` block. Nothing here is outstanding.
 
-```yaml
-llm:
-  think: false                       # qwen3 hybrid reasoning off; see §3.0a
-  cache:
-    enabled: true
-    path: data/cache/llm_cache.sqlite
+### 8.1 Keys read from code but not declared in the file
 
-agents:
-  planner:
-    template_shortcut: false         # §5.5 — keep OFF for the headline config
-  retriever:
-    multi_query: true
-    max_rewrites: 2
-    rerank_margin_gate: 0.15         # §5.2
-  verifier:
-    max_evidence: 20
-    uncertainty_band: 0.15           # §3.5 step 5
-    weights: {nli: 0.45, citation: 0.25, retrieval: 0.15, llm: 0.15}
+Ten keys are read with an in-code default that `config/config.yaml` never states. They are not bugs — the defaults are the shipped behaviour — but they are invisible to anyone reading the config to find out what ran, and the report cannot cite a value that is not written down. Declare them, or accept that these numbers live in the source:
 
-orchestrator:
-  reserve_llm_calls: 2               # §2.6
-  answer_selection: best_confidence  # §2.5
+| Key | In-code default | Where |
+|---|---|---|
+| `agents.verifier.evidence_passages` | `3` | `orchestrator.py` — passages per sub-query contributing sentences to the evidence pool |
+| `agents.verifier.entail_threshold` | `0.5` | `verifier.py` — `Claim.supported` |
+| `agents.verifier.contradiction_threshold` | `0.7` | `verifier.py` — the contradiction screen of §3.5 step 2 |
+| `agents.retriever.rerank_min_pool` | `10` | `indexing/rerank.py` — the pool floor of §5.2 |
+| `agents.kg.max_seeds` | `4` | `kg_navigator.py` |
+| `agents.kg.llm_link_on_empty` | `False` | `kg_navigator.py` — the §3.3 escape to `kg.link_entities.v1` |
+| `retrieval.rerank.batch_size` | `32` | `indexing/rerank.py` |
+| `retrieval.sparse.index_title` | `True` | `indexing/bm25_index.py` |
+| `retrieval.sparse.method_variant` | `"lucene"` | `indexing/bm25_index.py` |
+| `retrieval.sparse.stopwords` | `"english_plus"` | `indexing/bm25_index.py` |
 
-trace:
-  dir: results/runs
-  raw_output_chars: 2000
-```
+Two of these are load-bearing enough to be worth a sentence in Chapter 3 wherever they are quoted: `evidence_passages: 3` bounds the evidence pool as tightly as `max_evidence: 20` does, and `entail_threshold: 0.5` decides what "supported" means in the NLI column.
+
+### 8.2 Two config values the file's own comments contradict
+
+`retrieval.rerank.model` is `cross-encoder/ms-marco-MiniLM-L-6-v2`; the canonical id is `cross-encoder/ms-marco-MiniLM-L6-v2` and the old one resolves only through a 307 redirect (`docs/environment-validation.md` §7). `indexing/rerank.py` already defaults to the canonical spelling, so the config is the one place still pinning the stale name. `retrieval.dense.batch_size` is still `256`, which environment validation §9 recommended lowering to `128`; the index builds completed, so this is a latent risk rather than a live one.
 
 ---
 
 ## 9. Reproducibility
 
-- Seed `random`, `numpy`, `torch`, and set `PYTHONHASHSEED=42` in `cli.py` before any import that might sample.
+- Seed `random`, `numpy` and `torch` through one function, `eval/run_eval.py::seed_everything`, which both entry points call — never a second copy.
+- `PYTHONHASHSEED` is fixed at interpreter start-up, so assigning it inside a running process does nothing. `cli.py::ensure_hash_seed` therefore **re-executes the interpreter once** with `PYTHONHASHSEED=42` set (a child process on Windows, `execve` on POSIX), guarded against looping, before any package import that might sample. Every import in `cli.py` is deferred into the command that needs it for the same reason.
+- **The two entry points are not equally strong, and this is worth knowing before quoting a number.** `python -m agentic_ir.cli eval …` goes through the re-exec and guarantees the hash seed. `python -m agentic_ir.eval.run_eval …` does not: `seed_everything` seeds the RNGs and then *records* whatever `PYTHONHASHSEED` happened to be in the environment (`meta.json → seeding.pythonhashseed`, `null` if unset). Prefer the `cli` form, and check that field before treating two runs as comparable.
 - `llm.options.seed: 42`, `temperature: 0.0`.
 - Every sort has an explicit tiebreaker: `(-score, doc_id)`, `(-weight, entity_id)`, `int(id[1:])`.
 - The 250-question stratified eval sample is generated **once** by `scripts/sample_eval_set.py` with seed 42 and materialised to `data/processed/{dataset}_eval_250.jsonl`; its SHA-256 is recorded in `meta.json`. Never re-sample at run time.
 - Prompt templates are versioned files; changing one requires bumping `.v1` → `.v2`. The SHA-1 in the trace makes a stale-prompt run detectable after the fact.
 - `meta.json` captures library versions, GPU name, Ollama model digest, and `cache_cold`.
-- The eval harness **checkpoints**: it appends to `traces.jsonl` and on restart skips qids already present. If question 194 does die, the run resumes at 194 rather than at 1.
+- The eval harness **checkpoints**: it appends to `traces.jsonl` and on restart skips qids already present (`--resume`). If question 194 does die, the run resumes at 194 rather than at 1.
+- **What a clean clone does and does not carry.** `results/runs/` is gitignored, so the per-question traces that `eval/tables.py` reads are not in the repository; the generated `results/tables/*.tex` are, and so is the report that `\input{}`s them. Regenerating a table therefore means re-running the configuration behind it, not just re-running `tables`. `data/processed/` is gitignored too, but its contents are reproducible: `scripts/sample_eval_set.py` redraws the frozen 250- and 50-question slices deterministically from `project.seed` and prints their SHA-256, and `meta.json` records the SHA-256 of the slice each run actually used — so a redrawn slice can be *checked* against the one the report used rather than assumed to match.
 
 ---
 
 ## 10. Risks
 
-1. **KG ground-truth leakage (highest severity).** 2WikiMultihopQA ships gold Wikidata evidence triples. Building the KG from those triples would let the KG Navigator read the answer key, and every KG-attributed gain in the report would be an artefact. **Mitigation, non-negotiable:** the KG is built from corpus passage text only (§3.3); gold triples are loaded exclusively by `eval/metrics.py` for scoring path quality. Enforce with a test that `kg/build.py` never opens a file whose name contains `evidence` or `triple`.
+1. **KG ground-truth leakage (highest severity).** 2WikiMultihopQA ships gold Wikidata evidence triples. Building the KG from those triples would let the KG Navigator read the answer key, and every KG-attributed gain in the report would be an artefact. **Mitigation, non-negotiable:** the KG is built from corpus passage text only (§3.3); gold triples are loaded exclusively by `eval/metrics.py` for scoring path quality. Enforced by `tests/test_guards.py::test_kg_build_never_opens_gold_evidence`, which asserts the builder never opens a file whose name contains `evidence` or `triple`.
 
-2. **Total evaluation wall clock.** 9 configurations × 2 datasets × 250 questions. Revised down after live measurement: at 52 tok/s and ~3.75 s per structured call, an agentic question costs ≈22–25 s (≈6 LLM calls plus CPU reranking and NLI), so one agentic config on one dataset is ≈1.7 h and the whole grid is ≈12–16 h rather than the 20–24 h first estimated. Note the one-time cost this hides: the first call after a model load spends ~9.5 s on prompt evaluation alone (CUDA warmup), which is why `OLLAMA_KEEP_ALIVE` is not optional. **Mitigation:** run the three ablations (`−planner`, `−kg`, `−verifier`) on a fixed 150-question subsample of the same 250 and say so explicitly in the results table caption; keep `agentic_full` and all baselines on the full 250. The LLM response cache makes re-runs after harness bugs nearly free, which is what actually saves this schedule.
+2. **Total evaluation wall clock.** 9 configurations × 2 datasets × 250 questions. Estimated at ≈22–25 s per agentic question after live measurement of the LLM path; the measured medians came in above that, at **28.3 s on HotpotQA and 35.4 s on 2WikiMultihopQA**, because the estimate under-counted CPU reranking (§5.2 and the `retrieval.rerank` comment in `config.yaml`) rather than generation. One agentic config on one dataset is therefore ≈2 h, and the grid ≈14–18 h. Note the one-time cost this hides: the first call after a model load spends ~9.5 s on prompt evaluation alone (CUDA warmup), which is why `OLLAMA_KEEP_ALIVE` is not optional. **What was actually done:** the planned 150-question subsample for the ablations was not needed — every ablation that has run, ran on the full 250, so every delta in the ablation tables is a paired comparison on an identical question set. The schedule was absorbed by running the grid over several days rather than by shrinking it, because the response cache that was supposed to make re-runs free does not exist (§3.0c). At the time of writing 16 of the 18 cells are complete; `agentic_no_planner` and `agentic_no_kg` on 2WikiMultihopQA are not, and `tables.py` renders them as `--` rather than omitting the row.
 
 3. **8 GB VRAM contention.** `qwen3:8b` (Q4 ≈ 5.2 GB) + 8192-token KV cache (≈0.6–1 GB) + bge-small (0.13 GB) + MiniLM cross-encoder (0.09 GB) + DeBERTa-v3-base NLI (≈0.7 GB) is right at the edge, and an OOM mid-run is exactly the question-194 failure we are trying to prevent. **Mitigation:** run all three HF encoders on **CPU at query time** — they process ~5 short queries and ~50 rerank pairs per question, which is a fraction of a second on CPU — and reserve the GPU entirely for Ollama. Use the GPU only for the offline corpus embedding build. Set `OLLAMA_KEEP_ALIVE=30m` so the model is not reloaded between questions.
 
-4. **`confidence_threshold: 0.55` is currently a guess.** It controls the re-plan rate, which is a headline agent metric; tuning it on the eval set would be leakage. **Mitigation:** calibrate on a 50-question dev slice drawn disjointly from the eval 250, sweep 0.40–0.75, report the sweep as a figure, and freeze the value before the eval run. The confidence-blend weights need the same treatment or an explicit statement that they were set a priori.
+4. **`confidence_threshold: 0.55` was a guess.** It controls the re-plan rate, which is a headline agent metric; tuning it on the eval set would be leakage. **Done, with a caveat that matters.** `src/agentic_ir/eval/calibrate.py` sweeps 0.40–0.75 on the disjoint 50-question calibration slice (`data/processed/{dataset}_calib_50.jsonl`) and writes `results/tables/calibration.tex` and `results/calibration/hotpotqa_threshold.json`. The value stayed at 0.55: the Youden-optimal point is 0.54 with a bootstrap interval of [0.45, 0.64], too wide on 50 questions to justify a change. The caveat is that the sweep is **post-hoc** — every confidence in it was produced by a single run at 0.55, and the threshold is not a read-out filter but a decision that changes the plan, the retrieval and therefore the answer. A genuine sweep needs one full run per threshold. The module's docstring and the table caption both say so; do not upgrade the claim. The sweep also reports ECE 0.332 / AUC 0.633, i.e. the confidence discriminates but is not calibrated as a probability, so the threshold is a ranking cut-point and nothing more. The blend weights were set a priori and were **not** calibrated; say that rather than implying otherwise. Only HotpotQA has been calibrated.
 
-5. **Two re-plans may be too few to show an effect.** If the initial plan is usually adequate, `replan_rate` will be low and the feedback loop — the central claim — will have little measurable impact. **Mitigation:** report re-plan *conditional* effectiveness (EM/F1 on the subset where a re-plan fired, first-cycle vs. selected answer) rather than only the marginal effect over all questions. The `verifier_false_reject` count from §6 is the honest counterweight. If the loop turns out not to help, that is a legitimate and reportable finding — but only if the trace is rich enough to prove it, which is why `best_cycle` and per-cycle verifications are in the schema.
+5. **Two re-plans may be too few to show an effect.** *(Materialised, but not in the way predicted — and this is now the report's headline finding.)* The worry was that the loop would rarely fire. It fires constantly: `replan_rate` is 0.472 on HotpotQA and 0.392 on 2WikiMultihopQA. What failed to replicate is the *effect*. Removing the verifier costs ΔF1 −0.037 [−0.065, −0.011], *p* = 0.008 on HotpotQA and ΔF1 −0.001 [−0.025, +0.025], *p* = 1.000 on 2WikiMultihopQA, where the loop ran on 98 of 250 questions and a later cycle was selected on 64 of them and still moved the aggregate by one thousandth of an F1 point. So the defensible statement is the conditional one — *the backward edge helps on HotpotQA and not on 2WikiMultihopQA* — and Chapter 4 states it that way. The mitigation still stands and is what makes that claim checkable: `best_cycle` and per-cycle verifications are in the trace schema, so conditional effectiveness is computable rather than asserted. **Do not let any document restate this as a general property of the architecture.**
 
-6. **Local-model JSON reliability.** An 8B model at `temperature 0` still emits malformed JSON on a nontrivial minority of structured calls. The five-rung ladder plus 2 repair retries should hold it well under 5%, but `parse_failures` must be reported per agent — if the Planner's rate is high, the "agentic" behaviour is partly the fallback rules, and the report has to say so.
+6. **Local-model JSON reliability.** *(Did not materialise.)* The concern was that an 8B model at `temperature 0` would emit malformed JSON on a nontrivial minority of structured calls, and that if the Planner's rate were high the "agentic" behaviour would be partly the fallback rules. Measured over the headline run `agentic_full_hotpotqa_20260904T221533Z`: **1 parse failure in 1065 LLM calls** (0.09%), against a tolerance of 5%. The five-rung ladder and two repair retries hold. The fallback rules are therefore a safety net rather than a co-author of the results, and the report can say so with a number. `parse_failures` is still carried per question in `metrics.csv`, so the check is repeatable on any later run.
 
-7. **Seeded ≠ bit-reproducible.** Ollama with a fixed seed is not guaranteed bit-identical across GPU batching or driver versions. **Mitigation:** the response cache makes a *completed* run exactly reproducible, and `meta.json` records the model digest. State the limitation in Chapter 4 rather than claiming stronger determinism than exists.
+7. **Seeded ≠ bit-reproducible, and nothing rescues it.** Ollama with a fixed seed is not guaranteed bit-identical across GPU batching or driver versions. The planned mitigation was the response cache, which would have made a *completed* run exactly replayable — and it does not exist (§3.0c). What remains is provenance, not reproduction: `meta.json` records the model digest, the config snapshot, the git commit, the platform and the GPU, and `traces.jsonl` records every call, so a divergent re-run can be **diagnosed** but not prevented. The deterministic parts of the system — retrieval, fusion, routing, evidence ranking, the state machine — are reproducible by construction (§9); the generative parts are not. State exactly that in Chapter 4.

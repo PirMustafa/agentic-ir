@@ -1,7 +1,9 @@
 """The orchestrator: an explicit state machine (architecture sections 2 and 4).
 
 INIT, PLAN, EXECUTE, AGGREGATE, SYNTHESIZE, VERIFY, REPLAN_GATE, FINALIZE, DONE,
-and the fourteen transitions between them. Explicit rather than implicit
+and the fifteen transitions between them -- numbered T1..T14, plus T2b, which is
+a second edge out of PLAN and deliberately does not renumber the sequence.
+``len(TRANSITIONS)`` is therefore 15 and not 14. Explicit rather than implicit
 control flow for two reasons: the mechanism has to be visible to be assessable,
 and a machine you can draw is a machine you can test transition by transition.
 

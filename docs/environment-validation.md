@@ -38,6 +38,45 @@ nDCG/MRR) is required. See §1.
 
 ---
 
+## Disposition, re-checked 2026-09-06
+
+This report is a dated snapshot: the checks below were run before the system existed, and the
+sections that follow are left as they were written. What has changed since is which findings were
+acted on. Re-verified against the tree as it stands, twelve of the sixteen are closed and four are
+open. The four open ones are not blockers — three are ergonomics and one is a latent memory risk —
+but a reader following this document should not spend time re-deriving them.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | `xanhho/2WikiMultihopQA` script loader | **Fixed** — `config.yaml` pins `framolfese/2WikiMultihopQA`, and `download_data.py` resolves shards from the Hub rather than calling plain `load_dataset` |
+| 2 | `cu124` cannot drive sm_120 | **Fixed** — README installs from the cu128 index and prints the `get_arch_list()` verification line |
+| 3 | `requirements.txt` installs CPU-only torch | **Fixed** — `torch` is no longer listed there; a comment points at the README's step 3 |
+| 4 | Unpinned `>=` floors | **Fixed** — every entry carries an upper bound, and the `sentence-transformers<6` / `transformers<5` pair is pinned coherently |
+| 5 | VRAM over-subscribed | **Fixed by placement**, but the cost estimate here was badly wrong — see below |
+| 6 | `Config` mutable through `get()`/`raw` | **Fixed** — `_freeze` returns `MappingProxyType`/tuples, and `Config.with_overrides()` gives ablations an explicit, non-leaking path |
+| 7 | `AGENTIC_IR_CONFIG` ignored after first call | **Fixed** — `_resolve_config_path` reads the env var outside the cache |
+| 8 | `lru_cache` yields four `Config` objects | **Fixed** — `.resolve()` collapses the spellings, `maxsize=8` |
+| 9 | Reranker id is a stale redirect | **Open** — `config.yaml` still says `ms-marco-MiniLM-L-6-v2`. `indexing/rerank.py` already defaults to the canonical `L6` spelling, so the config file is the only place still pinning the renamed repo |
+| 10 | Windows cp1252 | **Fixed** — `PYTHONUTF8=1` is in the README, every `open()` in `src/` and `scripts/` passes `encoding="utf-8"`, and the trace writer appends UTF-8 bytes from `orjson` in `"ab"` mode |
+| 11 | `dense.batch_size: 256` unvalidated | **Open** — still 256. Both index builds completed, so this is a latent OOM risk on a busier card, not a live failure |
+| 12 | README omits `pip install -e .` | **Fixed** — the README's setup step 4 now installs the package, and explains why `pytest` and `scripts/*.py` work without it while `python -m agentic_ir.*` does not |
+| 13 | Ollama not installed | **Resolved** — every run's `meta.json` carries the `qwen3:8b` digest `500a1f06…` |
+| 14 | `resolve_path` raises a bare `TypeError` | **Open** — unchanged; the message still does not name the key |
+| 15 | `yaml.safe_load` can return `None` | **Fixed** — `_load_cached` applies `or {}` |
+| 16 | `Paths.from_config` mkdirs on a read path | **Open** — unchanged; there is still no `create=` flag, so importing it creates four directories |
+
+**The correction that matters most is inside §5.** The placement recommended there was adopted and
+was the right call, but the number attached to the cross-encoder was not. §5 estimates the MiniLM
+reranker at a fraction of a second on CPU. Measured over 722 calls of the headline run it is
+**5.0 s median and 7.2 s p90 for 50 pairs** — wrong by a factor of ten, and about 15 s of a 28 s
+median question, which makes it the single largest per-question cost, larger than generation. The
+conclusion survives the correction: with ~1.5 GiB free while Ollama holds the model, moving it to
+the GPU would over-commit and spill to shared memory on Windows, which costs more than it saves.
+But the trade is latency for stability, not "essentially free" as §5 implies. `config.yaml` carries
+the measured figure at the `retrieval.rerank` block; treat that as authoritative over §5's estimate.
+
+---
+
 ## 1. Dependency installability on Python 3.13 / Windows — **NO BLOCKER**
 
 **[VERIFIED]** Method: `pip download --no-deps --only-binary=:all: -d <scratch> <pkg>`. Forcing
@@ -622,13 +661,26 @@ python -m agentic_ir.cli ask "..."
 python -m agentic_ir.eval.run_eval --dataset hotpotqa --config agentic_full
 ```
 
-**[INFERRED]** Both fail with `ModuleNotFoundError: No module named 'agentic_ir'` when run from the
-repo root, because `src/` is not on `sys.path` outside of pytest. (I confirmed the package imports
-only when `PYTHONPATH=src` is set explicitly.)
+**[VERIFIED]** (re-checked 2026-09-06, on the tree as it stands) Both fail from the repo root:
 
-**Fix:** add to README setup, after `pip install -r requirements.txt`:
+```
+python -m agentic_ir.cli --help
+  -> Error while finding module specification for 'agentic_ir.cli'
+     (ModuleNotFoundError: No module named 'agentic_ir')
+
+PYTHONPATH=src python -m agentic_ir.cli --help
+  -> usage: python -m agentic_ir.cli [-h] [--seed SEED] {ask,eval,tables} ...
+```
+
+`pytest` is unaffected (`pythonpath = ["src"]` in `pyproject.toml`; 377 tests collect), and so are
+the `scripts/*.py`, which insert `src/` into `sys.path` themselves. That is precisely why the
+omission survives so long: everything a developer runs while building the thing works, and the
+first `python -m` command a fresh reader types does not.
+
+**Fixed** — README setup step 4 is now:
 
 ```bash
+pip install -r requirements.txt
 pip install -e .          # puts agentic_ir on the path for `python -m agentic_ir.cli`
 ```
 
