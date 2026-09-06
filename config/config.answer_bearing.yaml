@@ -1,3 +1,14 @@
+# Variant of config.yaml for ONE experiment: the answer-bearing entailment
+# hypothesis (agents/verifier.py::_hypothesis).
+#
+# Identical to config.yaml except for two lines -- entail_target, and a
+# separate trace.dir. The separate directory is not tidiness. tables.py's
+# discover_runs() takes the lexicographically greatest run id matching
+# '<config>_<dataset>_', so a corrected agentic_full run written beside the
+# evaluated one would silently replace it in every table in the report.
+#
+# Use with:  AGENTIC_IR_CONFIG=config/config.answer_bearing.yaml
+
 # ============================================================
 # Agentic AI for Information Retrieval
 # Central configuration. Every knob referenced in the report
@@ -165,7 +176,7 @@ agents:
     # See agents/verifier.py::_hypothesis. Measured AUC of the entailment
     # score under `sentence` is 0.529 (HotpotQA) and 0.508 (2Wiki), both
     # intervals containing chance.
-    entail_target: sentence
+    entail_target: answer_bearing
     require_citations: true
     max_evidence: 20
     # Call the LLM adjudicator only inside +/- this band around the threshold.
@@ -209,5 +220,5 @@ evaluation:
 # Tracing
 # ------------------------------------------------------------
 trace:
-  dir: results/runs
+  dir: results/runs_answer_bearing
   raw_output_chars: 2000
