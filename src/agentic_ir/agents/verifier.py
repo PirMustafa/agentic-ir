@@ -144,6 +144,19 @@ def _tokens(text: str) -> set[str]:
     return set(_WORD_RE.findall(text.lower()))
 
 
+def _normalise_for_containment(text: str) -> str:
+    """Lowercased words joined by single spaces, for substring containment.
+
+    Deliberately not token-set containment. The question is whether the answer
+    appears *as a phrase* in the sentence offered as evidence for it, and a set
+    intersection would accept "New York City" inside a sentence that happened
+    to contain "new", "york" and "city" in unrelated places. Padding with
+    spaces at both ends is what keeps the check on word boundaries, so "Ann"
+    does not match "Anne Boleyn".
+    """
+    return " " + " ".join(_WORD_RE.findall(text.lower())) + " "
+
+
 def _clip(text: str, limit: int = MAX_PREMISE_CHARS) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit].rstrip() + " ..."
@@ -249,6 +262,11 @@ class Verifier(BaseAgent):
                 "agents.verifier.contradiction_threshold", DEFAULT_CONTRADICTION_THRESHOLD
             )
         )
+        # What the entailment check takes as its hypothesis. See
+        # :meth:`_hypothesis` for why this is a knob and not a constant.
+        self.entail_target = str(
+            self.cfg.get("agents.verifier.entail_target", "sentence")
+        )
         weights = dict(self.cfg.get("agents.verifier.weights", {}) or {})
         self.weights = {
             "nli": float(weights.get("nli", 0.45)),
@@ -299,6 +317,52 @@ class Verifier(BaseAgent):
             result = self._degraded(state, cand, "verifier_exception")
         return result
 
+    # -- what gets entailed ------------------------------------------------
+
+    def _hypothesis(self, cand: AnswerCandidate) -> tuple[str, str | None]:
+        """The claim the NLI model is asked to check, and why it may be empty.
+
+        The original design entails ``answer_sentence`` and never ``answer``.
+        Measured over both evaluated datasets, that makes the entailment score
+        useless as a correctness signal: AUC 0.529 on HotpotQA and 0.508 on
+        2WikiMultihopQA, both intervals containing chance. The mechanism is
+        visible in one record. On qid ``5a7af32e55429931da12c99c`` the
+        Synthesizer answered "New York City" and emitted, as its answer
+        sentence, a verbatim copy of the cited premise -- a sentence about an
+        entirely different song, in which the string "New York City" does not
+        appear. The premise entails its own copy at 0.995, the blend reached
+        0.821, and a wrong answer was accepted. What the check measures there
+        is whether the Synthesizer copied, not whether the answer is supported.
+
+        ``answer_bearing`` closes exactly that hole: if the answer string does
+        not occur in the sentence offered as evidence for it, the sentence is
+        not a claim about the answer and earns no support, whatever its
+        entailment score. It is a necessary condition, not a sufficient one --
+        a sentence can contain the answer and still be irrelevant -- so it is
+        expressed as a veto rather than as a score.
+
+        Kept as configuration rather than applied outright because the
+        evaluated grid ran under ``sentence`` and its numbers have to stay
+        reproducible. ``sentence`` is the default for that reason alone.
+
+        Returns ``(hypothesis, veto_reason)``; a veto reason means the
+        hypothesis was rejected and support should be zero.
+        """
+        sentence = cand.answer_sentence.strip()
+        answer = cand.answer.strip()
+        if self.entail_target != "answer_bearing":
+            return sentence or answer, None
+        if not answer:
+            return sentence, None
+        if not sentence:
+            # Nothing but the answer to go on. A bare entity is not a
+            # proposition and NLI over it is noise, so decline rather than
+            # score it.
+            return "", "no_answer_sentence"
+        if _normalise_for_containment(answer) in _normalise_for_containment(sentence):
+            return sentence, None
+        return sentence, "answer_absent_from_its_own_sentence"
+
     # -- pipeline ----------------------------------------------------------
 
     def _verify(
@@ -315,7 +379,7 @@ class Verifier(BaseAgent):
         resolved = [cid for cid in cand.citations if cid in pool]
         hallucinated = tuple(cid for cid in cand.citations if cid not in pool)
 
-        hypothesis = cand.answer_sentence.strip() or cand.answer.strip()
+        hypothesis, veto = self._hypothesis(cand)
         method: str = "nli"
         nli_support = 0.0
         best_premise: str | None = None
@@ -324,7 +388,14 @@ class Verifier(BaseAgent):
 
         # 2. Entailment over the cited premises, plus a contradiction screen
         #    over the highest-ranked uncited evidence.
-        if hypothesis and self.method != "llm":
+        if veto:
+            # The hypothesis is not a claim about the answer, so no entailment
+            # score over it means anything. Recorded by name rather than folded
+            # into a zero, because "we did not check" and "we checked and found
+            # nothing" are different facts about a run.
+            method = f"nli_vetoed:{veto}"
+            nli_label = veto
+        elif hypothesis and self.method != "llm":
             scores, ok = self._entail(
                 [(pool[cid].text, hypothesis) for cid in resolved]
             )
