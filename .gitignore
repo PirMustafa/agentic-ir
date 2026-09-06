@@ -9,6 +9,9 @@ data/indexes/
 # Results: keep tables/figures, drop raw per-question traces
 results/runs/*
 !results/runs/.gitkeep
+# The correction experiment writes here, kept apart from results/runs so
+# tables.py::discover_runs cannot pick it up in place of an evaluated run.
+results/runs_answer_bearing/*
 
 # Python
 __pycache__/
