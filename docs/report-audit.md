@@ -704,3 +704,39 @@ discriminate because none of its inputs does. See §10.6 and
 **Run inventory at this point.** 17 of 18 cells complete.
 `agentic_no_kg_twowiki_20260906T124506Z` is the last, in flight and marked
 preliminary in every table; its deltas and significance marks are withheld.
+
+### 10.8 Grid complete: 18 of 18. The knowledge graph is a null twice.
+
+`agentic_no_kg_twowiki_20260906T124506Z` completed at 250. Every cell of the
+9x2 grid is now over the same frozen 250 questions.
+
+| removed | HotpotQA dF1 | 2WikiMultihopQA dF1 |
+|---|---|---|
+| Planner | +0.033 [-0.017, +0.086], p = 0.186 | **+0.121 [+0.067, +0.173], p < 0.001** |
+| KG Navigator | -0.009 [-0.048, +0.029], p = 0.646 | +0.018 [-0.015, +0.053], p = 0.252 |
+| Verifier | **-0.037 [-0.065, -0.011], p = 0.008** | -0.001 [-0.025, +0.025], p = 1.000 |
+
+The graph is the one component whose reading did not change between datasets:
+a null both times, and on 2WikiMultihopQA -- the dataset whose longer chains
+were supposed to be where a bridge-finder earns its keep -- the sign is
+positive. Chain length was the variable that should have unlocked it.
+Lengthening the chains changed nothing.
+
+Its cost is consistent and large. Tool calls 16.00 -> 8.65 and median latency
+35.4s -> 15.8s on 2WikiMultihopQA; 14.83 -> 8.15 and 28.3s -> 11.8s on
+HotpotQA. Roughly half the system's tool calls and more than half its median
+latency, for no effect either evaluation can detect. Unlike the planner
+ablation this is cost-without-effect rather than harm: the graph is not
+damaging the answer, it is being paid for and ignored.
+
+**The completed picture.** Two of three components were read differently by
+their second dataset -- the verifier's significant gain vanished, the
+planner's harmless null became significant damage. Only the graph read the
+same way twice. That is the strongest argument in this report for why a
+single-dataset ablation should not be trusted, and it is made by the report's
+own grid rather than asserted.
+
+**Rewritten in consequence:** `ch4` graph-ablation paragraph (which previously
+deferred to this row), `ch5` Empirical Findings and Limitations. The
+completeness paragraph now reads "eighteen of eighteen" rather than listing
+what is in flight.

@@ -649,15 +649,32 @@ model calls are unchanged at 4.28 against 4.26: almost half of the full
 system's tool calls are graph lookups, and on HotpotQA they buy nothing this
 grid can measure.
 
-Two readings survive and the grid does not separate them. The first is that
-HotpotQA's two-hop questions rarely need a bridge the retriever has not
-already surfaced --- the same explanation the planner ablation invited, and
-consistent with \texttt{hybrid\_rerank}'s Recall@10 of 0.876 --- so the
-graph's value, if it has one, must be looked for on longer chains. That is the
-2WikiMultihopQA row, and it is the second thing this section is waiting for.
-The second reading is that the induced graph is too sparse for its
-neighbourhoods to add anything, which would make the null a fact about this
-graph rather than about graph navigation as a technique.
+Two readings were open on the HotpotQA row alone. The first was that two-hop
+questions rarely need a bridge the retriever has not already surfaced --- the
+same explanation the planner ablation invited, and consistent with
+\texttt{hybrid\_rerank}'s Recall@10 of 0.876 --- so the graph's value, if it
+had one, would have to appear on longer chains. The second was that the
+induced graph is simply too sparse for its neighbourhoods to add anything,
+which would make the null a fact about this graph rather than about graph
+navigation as a technique.
+
+2WikiMultihopQA closes the first reading. On the dataset with the longer
+chains, \texttt{agentic\_no\_kg} scores an exact match of 0.256 and F1 of
+0.285 against the full system's 0.224 and 0.267 --- a paired $\Delta$F1 of
+$+0.018$ with a 95\% interval of $[-0.015, +0.053]$ and $p = 0.252$. Not
+significant, and pointing the same way the HotpotQA sign did not: removing the
+graph is, if anything, marginally better. Two datasets, two nulls, and the
+longer chains produce no more benefit than the shorter ones. Whatever the
+graph is contributing, chain length is not the variable that unlocks it.
+
+The bill is the same on both and it is not small. Tool calls fall from 16.00
+per question to 8.65 and median latency from 35.4\,s to 15.8\,s on
+2WikiMultihopQA, mirroring 14.83 to 8.15 and 28.3\,s to 11.8\,s on HotpotQA.
+Across both datasets the KG Navigator accounts for roughly half of the
+system's tool calls and more than half of its median latency, and returns
+nothing either evaluation can detect. That is the clearest cost-without-effect
+result in the grid, and unlike the planner ablation it is a null rather than a
+harm: the graph is not damaging the answer, it is being paid for and ignored.
 Chapter~\ref{ch:conclusions} keeps both open and states what would decide
 between them.
 

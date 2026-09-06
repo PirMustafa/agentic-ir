@@ -14,7 +14,7 @@
 %   hotpotqa/naive_rag: naive_rag_hotpotqa_20260902T120313Z (250 questions)
 %   hotpotqa/self_ask: self_ask_hotpotqa_20260904T194457Z (250 questions)
 %   twowiki/agentic_full: agentic_full_twowiki_20260905T184526Z (250 questions)
-%   twowiki/agentic_no_kg: agentic_no_kg_twowiki_20260906T124506Z (7 questions)  PRELIMINARY: short of the 250-question evaluation slice; deltas and significance withheld
+%   twowiki/agentic_no_kg: agentic_no_kg_twowiki_20260906T124506Z (250 questions)
 %   twowiki/agentic_no_planner: agentic_no_planner_twowiki_20260906T121324Z (250 questions)
 %   twowiki/agentic_no_verifier: agentic_no_verifier_twowiki_20260906T103608Z (250 questions)
 %   twowiki/bm25_only: bm25_only_twowiki_20260902T113905Z (250 questions)
@@ -47,7 +47,7 @@
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \caption{Ablation study on \texttt{twowiki}. Deltas are measured against \texttt{agentic\_full} ($\dagger$), so a \textit{negative} $\Delta$F1 means the removed component was helping. \textbf{Bold} marks an ablation significantly \textit{better} than the full system and $^{\downarrow}$ one significantly worse (paired bootstrap, 95\% CI of the difference excluding zero); unmarked differences are not significant. Sample sizes are stated per row and are not assumed equal: \texttt{agentic\_full} $n=250$, \texttt{agentic\_no\_planner} $n=250$, \texttt{agentic\_no\_kg} $n=7^{\ddagger}$, \texttt{agentic\_no\_verifier} $n=250$, \texttt{hybrid\_rerank} $n=250$, against a 250-question evaluation slice. \texttt{hybrid\_rerank} is repeated from the main results as the non-agentic floor, since removing planning, synthesis and verification reduces the pipeline to it. Latency is the median per question, matching Table~\ref{tab:agent-metrics-twowiki}; the maximum and the wall-clock overruns are reported there. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{hybrid\_rerank} is retrieval-only: it emits a ranking and no answer, so the EM, F1, $\Delta$F1 and $p$ columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened. \textbf{$^{\ddagger}$ marks a preliminary row}: \texttt{agentic\_no\_kg} ($n=7$) had not covered the full 250-question evaluation slice when this table was generated, so the point estimates are over the questions completed so far and every delta, $p$-value and significance mark against it is withheld -- a paired test between a prefix and the full slice is not a paired test. These numbers will move; they are not final results.}
+  \caption{Ablation study on \texttt{twowiki}. Deltas are measured against \texttt{agentic\_full} ($\dagger$), so a \textit{negative} $\Delta$F1 means the removed component was helping. \textbf{Bold} marks an ablation significantly \textit{better} than the full system and $^{\downarrow}$ one significantly worse (paired bootstrap, 95\% CI of the difference excluding zero); unmarked differences are not significant. Every row covers the same frozen 250-question evaluation slice as the main results -- no ablation was run on a reduced subsample (\texttt{agentic\_full} $n=250$, \texttt{agentic\_no\_planner} $n=250$, \texttt{agentic\_no\_kg} $n=250$, \texttt{agentic\_no\_verifier} $n=250$, \texttt{hybrid\_rerank} $n=250$). \texttt{hybrid\_rerank} is repeated from the main results as the non-agentic floor, since removing planning, synthesis and verification reduces the pipeline to it. Latency is the median per question, matching Table~\ref{tab:agent-metrics-twowiki}; the maximum and the wall-clock overruns are reported there. \texttt{--} across a whole row marks a configuration that has not been run. \texttt{hybrid\_rerank} is retrieval-only: it emits a ranking and no answer, so the EM, F1, $\Delta$F1 and $p$ columns show \texttt{--} because there is no answer to score, not because the run is absent. Scoring the unattempted answer would report 0.000 and assert a failed attempt that never happened.}
   \label{tab:ablations-twowiki}
   \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%
   \begin{tabular}{lrrrrrrr}
@@ -56,7 +56,7 @@
     \midrule
     \texttt{agentic\_full} & 250 & 0.224$^{\dagger}$ & 0.267$^{\dagger}$ & -- & -- & 3.80 & 35.4 \\
     \texttt{agentic\_no\_planner} & 250 & \textbf{0.324} & \textbf{0.388} & +0.121 [+0.067, +0.173] & $<$0.001 & 1.26 & 4.5 \\
-    \texttt{agentic\_no\_kg} & 7$^{\ddagger}$ & 0.429 & 0.429 & -- & -- & 3.57 & 12.1 \\
+    \texttt{agentic\_no\_kg} & 250 & 0.256 & 0.285 & +0.018 [-0.015, +0.053] & 0.252 & 3.87 & 15.8 \\
     \texttt{agentic\_no\_verifier} & 250 & 0.216 & 0.266 & -0.001 [-0.025, +0.025] & 1.000 & 2.03 & 18.4 \\
     \texttt{hybrid\_rerank} \textit{(non-agentic floor)} & 250 & -- & -- & -- & -- & 0.00 & 8.3 \\
     \bottomrule
