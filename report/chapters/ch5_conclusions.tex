@@ -42,8 +42,11 @@ Every number in this section is taken from the tables of
 Chapter~\ref{ch:implementation}, which are generated from the run artefacts;
 none is typed by hand, and where a run has not finished the finding is withheld
 rather than estimated. The headline is stated once, plainly, before the
-structure: the agentic system is not the most accurate system in this study, it
-is the only one that can show its work, and those two facts are the result.
+structure: the agentic system as designed is not the most accurate system in
+this study and is the only one that can show its work --- but the ablation that
+deletes its first component is both, beating the strongest baseline on answer
+quality while grounding nine citations in ten. The trade the report set out to
+describe turns out to be a trade the architecture imposed on itself.
 
 The evaluation answers four questions. Each is stated explicitly because each
 has a defensible negative answer, and the protocol was fixed before any of them
@@ -190,9 +193,44 @@ duplicate of the identity plan and none executed. The reading that
 fits every other row is that HotpotQA's two-hop questions are largely within
 reach of one well-formed hybrid query, so decomposition dilutes a ranking that
 was already good and asks an 8B model to compose across sub-answers it would
-not otherwise have had to. Whether the Planner earns its cost on the longer
-chains of 2WikiMultihopQA is the open question that dataset's ablation row
-will answer.
+not otherwise have had to.
+
+2WikiMultihopQA answered that question against the Planner, and it is the
+most consequential result in this study. There
+\texttt{agentic\_no\_planner} scores an exact match of 0.324 and F1 of 0.388
+against the full system's 0.224 and 0.267: $\Delta$F1 $= +0.121$
+$[+0.067, +0.173]$, $p < 0.001$, at 1.26 model calls against 3.80 and a median
+of 4.5\,s against 35.4\,s. Removing the component the brief lists first is
+worth twelve F1 points on the harder dataset, at a third of the calls and an
+eighth of the wall clock.
+
+That row is also the only configuration anywhere in this grid that
+significantly beats a baseline on answer quality. Against \texttt{self\_ask}
+it scores $\Delta$F1 $= +0.078$ $[+0.021, +0.135]$ --- at 1.26 model calls
+against 1.24, a median of 4.5\,s against 13.2\,s, and a citation grounding of
+0.900 against 0.000. Cheaper, faster, more accurate and auditable, all at
+once. The report's headline --- that the agentic system trades accuracy for
+accountability --- is true of \texttt{agentic\_full} and false of this
+ablation of it, which gives up nothing.
+
+The configuration deserves a name it does not have. With the Planner removed
+the plan is one identity node, so the system issues a single query exactly as
+\texttt{naive\_rag} does; and \texttt{naive\_rag} scores 0.152 and 0.200 on
+the same questions. The exact-match gap between two systems that
+each ask one question is everything else in the stack: graph evidence beside
+the retrieved passages, sentence-granular pooling, synthesis constrained to
+cite what it used, and a verification pass. The agentic machinery earns its
+cost. The decomposition was spending it.
+
+Across both datasets the direction is consistent and grows with difficulty:
+$+0.033$ and not significant on two-hop questions, $+0.121$ at $p < 0.001$ on
+longer chains. That ordering rules out the dilution explanation, which
+predicts the opposite --- 2WikiMultihopQA's rankings are the worse of the two,
+Recall@10 0.727 against 0.876, so a cost that came from diluting a good
+ranking should have fallen there. What grows with chain length is the number
+of sub-answers an 8B model must compose across. The Planner's failure is not
+that it writes bad sub-queries; it is that it sets its own synthesiser a task
+that model cannot finish.
 
 The graph ablation completes the HotpotQA grid with a third result that
 qualifies the architecture rather than confirming it. \texttt{agentic\_no\_kg}
@@ -314,13 +352,16 @@ also not finished. The ablations run against the same 250-question evaluation
 split rather than a subsample; at the time of writing the six baseline and
 full-system configurations are complete on both datasets, all three ablations
 are complete on HotpotQA, and on 2WikiMultihopQA \texttt{agentic\_no\_verifier}
-is complete, \texttt{agentic\_no\_planner} is mid-run and
-\texttt{agentic\_no\_kg} had not started. The verifier ablation is therefore the only one measured
-twice, and the two measurements disagree --- which is precisely why the
-planner's and the graph's single nulls are not treated here as settled either.
+and \texttt{agentic\_no\_planner} are complete and
+\texttt{agentic\_no\_kg} was in flight. Two of the three components are
+therefore measured twice, and both second measurements changed the reading:
+the verifier's HotpotQA gain vanished, and the planner's HotpotQA null became
+a significant twelve-point improvement from deleting it. That is why the
+graph's single null is not treated here as settled either.
 A component that looked significant on HotpotQA turned out to do nothing on
-2WikiMultihopQA; the two that looked like nulls on HotpotQA have not yet had
-the chance to do the reverse.
+2WikiMultihopQA, and one that looked like a harmless null there turned out to
+be doing measurable damage. The graph has not yet had its second measurement,
+and on this evidence a second measurement is not a formality.
 
 \textbf{Model scale.} Every result is conditional on a 4-bit quantised 8B model.
 The planner findings in particular are unlikely to transfer: a frontier model

@@ -69,7 +69,18 @@ the other: removing it, with everything else held fixed, changes HotpotQA F1
 by $-0.037$ $[-0.065, -0.011]$, a significant loss, and 2WikiMultihopQA F1 by
 $-0.001$ $[-0.025, +0.025]$, $p = 1.000$ --- though it fired on 98 of those
 250 questions and charged the same doubled cost. The contribution is therefore
-reported as conditional rather than general. On attribution the agentic system is not more accurate but
+reported as conditional rather than general. The ablation grid's largest effect
+belongs to the component the brief lists first, and its sign is negative:
+removing the Planner improves F1 by $+0.033$ $[-0.017, +0.086]$ on HotpotQA and
+by $+0.121$ $[+0.067, +0.173]$, $p < 0.001$, on 2WikiMultihopQA, at a third of
+the model calls and an eighth of the median latency. That configuration is also
+the only one in the study to beat the strongest answering baseline
+significantly, $\Delta$F1 $= +0.078$ $[+0.021, +0.135]$, while grounding 0.900
+of its citations against that baseline's zero. Since it plans a single identity
+node it issues one query, as \texttt{naive\_rag} does, and outscores it by
+0.324 exact match to 0.152 --- so what the agentic stack contributes here is its
+evidence handling and verification, and query decomposition subtracts from it.
+On attribution the agentic system is not more accurate but
 differently accountable. Its supporting-fact F1 of 0.481 and 0.421 sits above
 the strongest retrieval baseline's 0.412 and 0.327, though the two are scored
 under different protocols and the tables place no significance mark between

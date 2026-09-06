@@ -488,16 +488,18 @@ the backward edge, leaving a system that plans and retrieves in multiple steps
 but never revisits its own answer; the difference between it and the full
 system is the contribution of this project, measured rather than asserted.
 
-The study is complete on HotpotQA and one row into three on 2WikiMultihopQA, and
+The study is complete on HotpotQA and two rows into three on 2WikiMultihopQA, and
 each row's sample size is printed so that no reader has to take that on trust.
 All three ablations --- \texttt{agentic\_no\_verifier},
 \texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg} --- have covered all
-250 HotpotQA questions, and \texttt{agentic\_no\_verifier} has now covered all
-250 on 2WikiMultihopQA as well, so every delta in
+250 HotpotQA questions, and \texttt{agentic\_no\_verifier} and
+\texttt{agentic\_no\_planner} have now covered all 250 on 2WikiMultihopQA as
+well, so every delta in
 Tables~\ref{tab:ablations-hotpotqa} and~\ref{tab:ablations-twowiki} is a
-paired comparison on an identical question set. \texttt{agentic\_no\_planner}
-and \texttt{agentic\_no\_kg} on 2WikiMultihopQA render as \texttt{--} and
-nothing is concluded from them.
+paired comparison on an identical question set. \texttt{agentic\_no\_kg} on
+2WikiMultihopQA was still in flight when these tables were generated; it is
+marked preliminary, every delta and significance mark against it is withheld,
+and nothing is concluded from it.
 
 The verifier ablation is the measurement this project exists to make, and it
 lands the way the architecture predicted. With the backward edge removed and
@@ -575,9 +577,55 @@ for an 8B model that then has to compose an answer across them, which would
 put the fault in synthesis rather than in planning. Either way the result is a
 finding about the planner and not an embarrassment to hide: the component
 that the brief's Table~1 lists first is the one whose contribution this grid
-cannot yet show, and 2WikiMultihopQA, whose chains are longer, is where the
-question will be decided.
+could not show, and 2WikiMultihopQA, whose chains are longer, was where the
+question would be decided.
 \end{sloppypar}
+
+It was decided against the Planner, and decisively. On 2WikiMultihopQA
+\texttt{agentic\_no\_planner} scores an exact match of 0.324 and F1 of 0.388
+against the full system's 0.224 and 0.267 --- a paired $\Delta$F1 of
+$+0.121$ with a 95\% interval of $[+0.067, +0.173]$ and $p < 0.001$. The
+interval is nowhere near zero. Removing the component the brief lists first
+does not merely fail to hurt on the harder dataset; it is worth twelve F1
+points, and it is worth them at 1.26 model calls per question against 3.80 and
+a median of 4.5\,s against 35.4\,s. A third of the calls, an eighth of the wall
+clock, and a significantly better answer.
+
+The same row carries the only unambiguously positive answer-quality result in
+this study. Measured against \texttt{self\_ask}, the strongest baseline that
+answers, \texttt{agentic\_no\_planner} is the first configuration anywhere in
+the grid to lead significantly: $\Delta$F1 $= +0.078$ $[+0.021, +0.135]$, at
+1.26 model calls against \texttt{self\_ask}'s 1.24 and a median of 4.5\,s
+against 13.2\,s. It does this while grounding 0.900 of its citations where
+\texttt{self\_ask} grounds none. Cheaper, faster, more accurate and auditable,
+on the harder of the two datasets.
+
+What that configuration is matters, because the name understates it. With the
+Planner removed the plan is a single identity node --- plan depth 1.00, one
+sub-query, one cycle --- so structurally it issues one query, exactly like
+\texttt{naive\_rag}. It is not \texttt{naive\_rag}. That baseline scores 0.152
+and 0.200 on the same questions. The exact-match gap between two
+systems that both ask one question is the rest of the agentic stack: KG
+evidence beside the retrieved passages, sentence-granular pooling and
+deduplication, synthesis constrained to cite what it used, and a verification
+pass. The evidence handling is doing the work; the decomposition was
+subtracting from it.
+
+Taken with the HotpotQA row, the direction is consistent and the magnitude
+grows with difficulty: $+0.033$ (not significant) on two-hop questions,
+$+0.121$ ($p < 0.001$) on the longer chains. The reading that fits both is the
+second of the two offered above rather than the first. If decomposition merely
+diluted an already-good ranking, its cost should fall where rankings are worse,
+and 2WikiMultihopQA's are worse --- Recall@10 of 0.727 against HotpotQA's
+0.876. The cost rises instead. What rises with chain length is the number of
+sub-answers an 8B model must compose across, and each composition is an
+opportunity to lose the thread. The Planner is not producing bad sub-queries so
+much as producing a task its own synthesiser cannot finish.
+
+This is the project's most consequential negative result and it is stated
+without hedging: on these two datasets, with this model, query decomposition
+made the system worse, significantly so where the questions were hardest, and
+the agentic components that earn their cost are the ones downstream of it.
 
 The graph ablation is the one for which a null result was always plausible,
 since Chapter~\ref{ch:methodology} describes the induced graph as a navigation

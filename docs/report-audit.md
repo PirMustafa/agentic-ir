@@ -654,3 +654,53 @@ planner's and graph's single nulls are not treated as settled either).
 The honest headline is the conditional one: **the backward edge helps on
 HotpotQA and not on 2WikiMultihopQA.** Anything stronger reads one row and
 ignores the other.
+
+### 10.7 Removing the Planner is the largest effect in the grid, and it is positive
+
+`agentic_no_planner_twowiki_20260906T121324Z` completed at 250.
+
+| | HotpotQA | 2WikiMultihopQA |
+|---|---|---|
+| `agentic_full` EM / F1 | 0.432 / 0.510 | 0.224 / 0.267 |
+| `agentic_no_planner` EM / F1 | 0.456 / 0.543 | **0.324 / 0.388** |
+| paired dF1 vs full | +0.033 [-0.017, +0.086], p = 0.186 | **+0.121 [+0.067, +0.173], p < 0.001** |
+| model calls, full vs ablated | 4.26 vs 1.35 | 3.80 vs 1.26 |
+| median latency, full vs ablated | 28.3s vs 9.7s | 35.4s vs 4.5s |
+
+Two things make this the study's most consequential row.
+
+**It is the only configuration that significantly beats a baseline on answer
+quality.** Against `self_ask` on 2WikiMultihopQA: dF1 +0.078 [+0.021, +0.135],
+at 1.26 model calls against 1.24, a median of 4.5s against 13.2s, and citation
+grounding 0.900 against 0.000. The report's headline -- that the system trades
+accuracy for accountability -- is true of `agentic_full` and false of this
+ablation of it, which gives up nothing.
+
+**It is not `naive_rag`.** With the Planner removed the plan is one identity
+node (depth 1.00, one sub-query, one cycle), so it issues a single query
+exactly as `naive_rag` does -- and `naive_rag` scores 0.152 / 0.200 on the same
+questions. The 0.172 exact-match gap between two one-query systems is the rest
+of the stack: KG evidence, sentence-granular pooling, citation-constrained
+synthesis, verification. The agentic machinery earns its cost; the
+decomposition was spending it.
+
+The effect grows with difficulty (+0.033 -> +0.121), which rules out the
+dilution explanation offered for the HotpotQA row: 2WikiMultihopQA's rankings
+are the worse of the two (Recall@10 0.727 vs 0.876), so a cost arising from
+diluting a good ranking should have shrunk there, not tripled. What grows with
+chain length is the number of sub-answers an 8B model must compose across.
+
+**Rewritten in consequence:** `main.tex` abstract (new sentences carrying both
+deltas, the baseline win, and the naive_rag comparison), `ch4` Ablation Study
+(the planner paragraph now ends with the 2Wiki result rather than deferring to
+it), `ch5` Empirical Findings and Limitations.
+
+Also recorded: every component of the confidence blend is at chance on both
+datasets -- nli_support 0.529 / 0.508, citation_grounding 0.494 / 0.504,
+retrieval_agreement 0.521 / 0.533, blend 0.538 / 0.513. The blend cannot
+discriminate because none of its inputs does. See §10.6 and
+`results/tables/confidence_diagnostic.tex`.
+
+**Run inventory at this point.** 17 of 18 cells complete.
+`agentic_no_kg_twowiki_20260906T124506Z` is the last, in flight and marked
+preliminary in every table; its deltas and significance marks are withheld.
