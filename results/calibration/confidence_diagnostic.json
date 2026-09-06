@@ -1,0 +1,52 @@
+[
+  {
+    "dataset": "hotpotqa",
+    "run_id": "agentic_full_hotpotqa_20260904T221533Z",
+    "n": 250,
+    "base_rate": 0.432,
+    "mean_confidence": 0.686504416,
+    "auc": 0.5382759520083463,
+    "auc_ci": [
+      0.4675684380032206,
+      0.6095599588265569
+    ],
+    "ece": 0.29600224799999997,
+    "gap": -0.010295465764050493,
+    "gap_ci": [
+      -0.13479902287363976,
+      0.11229946524064172
+    ],
+    "threshold": 0.55,
+    "n_below": 87,
+    "n_above": 163,
+    "notes": [
+      "the AUC interval contains 0.5, so the signal cannot be shown to rank correct answers above incorrect ones",
+      "the re-plan trigger selects questions whose accuracy is indistinguishable from the accuracy of the ones it accepts"
+    ]
+  },
+  {
+    "dataset": "twowiki",
+    "run_id": "agentic_full_twowiki_20260905T184526Z",
+    "n": 250,
+    "base_rate": 0.224,
+    "mean_confidence": 0.744558256,
+    "auc": 0.5127025036818851,
+    "auc_ci": [
+      0.4257703081232493,
+      0.606581219889101
+    ],
+    "ece": 0.520558256,
+    "gap": 0.06247086247086245,
+    "gap_ci": [
+      -0.0705456095481671,
+      0.19828722002635044
+    ],
+    "threshold": 0.55,
+    "n_below": 55,
+    "n_above": 195,
+    "notes": [
+      "the AUC interval contains 0.5, so the signal cannot be shown to rank correct answers above incorrect ones",
+      "the re-plan trigger selects questions whose accuracy is indistinguishable from the accuracy of the ones it accepts"
+    ]
+  }
+]
