@@ -581,3 +581,41 @@ the chapters now quote, each attributed to its run in the text:
 
 Sentences that depend on the rows still open are all in `ch4` (Ablation Study, the one
 `% PLACEHOLDER`) and `ch5` (Empirical Findings, Limitations), and each says so.
+
+### 10.5 Run inventory (third pass, 2026-09-06)
+
+The HotpotQA ablation grid is now complete. `agentic_no_kg_hotpotqa_20260905T232702Z`
+finished at 250 and is no longer preliminary anywhere: the `% PLACEHOLDER` in
+`ch4` is filled from it, and `ch5`'s Empirical Findings and Limitations are
+rewritten against it. Its result is a null -- EM 0.404, F1 0.501, paired
+dF1 -0.009 [-0.048, +0.029], p = 0.646, with Recall@10 0.820 against the full
+system's 0.812 and nDCG@10 0.766 [0.737, 0.793] against 0.763 [0.734, 0.791] --
+so the knowledge graph cannot be shown to help on this dataset while accounting
+for almost half the tool calls and more than half the median latency.
+
+| configuration | HotpotQA | 2WikiMultihopQA |
+|---|---|---|
+| `bm25_only` | 250 (`20260902T113736Z`) | 250 (`20260902T113905Z`) |
+| `dense_only` | 250 (`20260902T113746Z`) | 250 (`20260902T113913Z`) |
+| `hybrid_rerank` | 250 (`20260902T114415Z`) | 250 (`20260904T184235Z`) |
+| `naive_rag` | 250 (`20260902T120313Z`) | 250 (`20260904T201400Z`) |
+| `self_ask` | 250 (`20260904T194457Z`) | 250 (`20260904T210355Z`) |
+| `agentic_full` | 250 (`20260904T221533Z`) | 250 (`20260905T184526Z`) |
+| `agentic_no_verifier` | **250** (`20260905T213927Z`) | **in flight**: `agentic_no_verifier_twowiki_20260906T103608Z`, 12 rows when the sweep was inspected and 16 when the tables were regenerated, still rising; every table marks the row preliminary, withholds its deltas and significance marks, and it drifts from `traces.jsonl` between regenerations |
+| `agentic_no_planner` | **250** (`20260905T224906Z`) | not started |
+| `agentic_no_kg` | **250** (`20260905T232702Z`) | not started |
+| `agentic_full` calibration slice | 50 (`20260904T184256Z`), feeds `calibration.tex` only | -- |
+
+**Guard fixed in this pass.**
+`test_incomplete_runs_are_not_given_deltas_or_significance_marks` keyed its
+`partial` set on the configuration name alone. `agentic_no_verifier` is complete
+on HotpotQA and in flight on 2WikiMultihopQA, so the guard condemned the finished
+HotpotQA deltas -- dF1 -0.037 [-0.065, -0.011], p = 0.008, the central result of
+the report -- as comparisons against a 16-question prefix that lives in a
+different table. The set is now keyed on `(dataset, configuration)`, the dataset
+read from the table's own caption, and the check fails loudly rather than
+silently if a caption ever stops naming one.
+
+Sentences that depend on the rows still open are now confined to `ch4`
+(Ablation Study, 2WikiMultihopQA paragraph) and `ch5` (Empirical Findings,
+Limitations), and each says so.

@@ -484,22 +484,17 @@ the backward edge, leaving a system that plans and retrieves in multiple steps
 but never revisits its own answer; the difference between it and the full
 system is the contribution of this project, measured rather than asserted.
 
-The study is complete on HotpotQA for two of the three components and open
-elsewhere, and each row's sample size is printed so that no reader has to take
-that on trust. \texttt{agentic\_no\_verifier} and \texttt{agentic\_no\_planner}
-have both covered all 250 HotpotQA questions, so their deltas are paired
-comparisons on the identical question set. \texttt{agentic\_no\_kg} on
-HotpotQA is still running and the three ablations on 2WikiMultihopQA are not
-started at the time of writing; the HotpotQA \texttt{agentic\_no\_kg} row is
-marked preliminary and carries no delta, the 2WikiMultihopQA rows render as
-\texttt{--}, and nothing below is concluded from either.
-
-% PLACEHOLDER --- the ONE open ablation block. Fill from
-% results/tables/ablations.tex once agentic_no_kg reaches n=250 on HotpotQA and
-% agentic_no_verifier, agentic_no_planner and agentic_no_kg reach n=250 on
-% 2WikiMultihopQA: per-component Delta-F1 with paired bootstrap interval and
-% p-value, plus LLM calls and median latency. The HotpotQA verifier and
-% planner results below are final and must not be re-typed.
+The study is complete on HotpotQA and still filling on 2WikiMultihopQA, and
+each row's sample size is printed so that no reader has to take that on trust.
+All three ablations --- \texttt{agentic\_no\_verifier},
+\texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg} --- have covered all
+250 HotpotQA questions, so every delta in Table~\ref{tab:ablations-hotpotqa}
+is a paired comparison on the identical question set. On 2WikiMultihopQA
+\texttt{agentic\_no\_verifier} was mid-run when these tables were generated,
+so it is marked preliminary and every delta, $p$-value and significance mark
+against it is withheld, and \texttt{agentic\_no\_planner} and
+\texttt{agentic\_no\_kg} render as \texttt{--}. Nothing below is concluded
+from a 2WikiMultihopQA ablation row.
 
 The verifier ablation is the measurement this project exists to make, and it
 lands the way the architecture predicted. With the backward edge removed and
@@ -550,11 +545,37 @@ question will be decided.
 
 The graph ablation is the one for which a null result was always plausible,
 since Chapter~\ref{ch:methodology} describes the induced graph as a navigation
-aid rather than a knowledge base, and it is the one still running. Its
-HotpotQA row had not covered the full 250 questions when these tables were
-generated --- the caption states how many it had --- so it is marked
-preliminary and carries no delta; it is printed so the reader can see the run
-exists, and nothing is concluded from it here.
+aid rather than a knowledge base, and a null result is what it returns.
+\texttt{agentic\_no\_kg} scores an exact match of 0.404 and F1 of 0.501
+against the full system's 0.432 and 0.510, a paired $\Delta$F1 of $-0.009$
+with a 95\% interval of $[-0.048, +0.029]$ and $p = 0.646$. The interval sits
+a whisker below zero and spans it comfortably, so on this dataset the
+knowledge graph cannot be shown to help answer accuracy at all.
+
+The retrieval table makes the point more sharply, because it measures the
+component on its own terms. Without the graph, Recall@10 is 0.820 against the
+full system's 0.812 and nDCG@10 is 0.766 $[0.737, 0.793]$ against 0.763
+$[0.734, 0.791]$ --- intervals that all but coincide --- and the failure
+profile records 15 bridge-link failures rather than 17. Bridge-entity
+discovery is exactly what the graph was added to supply, so the null appears
+first in the metric the component was chosen for and not only in the aggregate
+downstream of it. What the graph does change is the bill. Tool calls fall from
+14.83 per question to 8.15 and median latency from 28.3\,s to 11.8\,s, while
+model calls are unchanged at 4.28 against 4.26: almost half of the full
+system's tool calls are graph lookups, and on HotpotQA they buy nothing this
+grid can measure.
+
+Two readings survive and the grid does not separate them. The first is that
+HotpotQA's two-hop questions rarely need a bridge the retriever has not
+already surfaced --- the same explanation the planner ablation invited, and
+consistent with \texttt{hybrid\_rerank}'s Recall@10 of 0.876 --- so the
+graph's value, if it has one, must be looked for on longer chains. That is the
+2WikiMultihopQA row, and it is the second thing this section is waiting for.
+The second reading is that the induced graph is too sparse for its
+neighbourhoods to add anything, which would make the null a fact about this
+graph rather than about graph navigation as a technique.
+Chapter~\ref{ch:conclusions} keeps both open and states what would decide
+between them.
 
 \section{Error Analysis}
 \label{sec:errors}

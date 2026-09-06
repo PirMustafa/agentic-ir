@@ -187,6 +187,21 @@ def config_of(cell: str) -> str | None:
     return name if name in CONFIGURATIONS else None
 
 
+def dataset_of(caption: str) -> str | None:
+    """The dataset a table's caption names, or ``None`` if it names neither.
+
+    A configuration can be complete on one dataset and in flight on the other.
+    A check that keys only on the configuration name then condemns the
+    finished rows along with the unfinished ones, which is how a correct
+    HotpotQA delta gets reported as a comparison against a 16-question prefix
+    that lives in a different table.
+    """
+    for name in DATASETS:
+        if "\\texttt{" + name + "}" in caption:
+            return name
+    return None
+
+
 def retrieval_only_configs() -> set[str]:
     """Configurations whose traces hold no answer for any question.
 
@@ -657,24 +672,34 @@ def test_incomplete_runs_are_not_given_deltas_or_significance_marks():
 
     partial = set()
     for table in tables:
-        for _, _, config, run_id, claimed in table_sources(read(table)):
+        for _, dataset, config, run_id, claimed in table_sources(read(table)):
             n = run_length(run_id)
             if (n if n is not None else claimed) < EVAL_SAMPLE_N:
-                partial.add(config)
+                partial.add((dataset, config))
     if not partial:
         pytest.skip("every run named by a table covers the full evaluation slice")
 
     offenders = []
     for table in tables:
         body = read(table)
-        for _, header, rows in tabulars(body):
+        for caption, header, rows in tabulars(body):
+            dataset = dataset_of(caption)
+            if dataset is None:
+                # Without a dataset this check cannot tell a finished row from
+                # an unfinished one, and would pass by matching nothing. Say so
+                # rather than go quiet.
+                offenders.append(
+                    f"{table.name}: a caption names no dataset, so a row cannot "
+                    f"be matched to the run behind it"
+                )
+                continue
             cols = [
                 i
                 for i, cell in enumerate(header)
                 if r"$\Delta$" in cell or cell == "$p$"
             ]
             for cells in rows:
-                if config_of(cells[0]) not in partial:
+                if (dataset, config_of(cells[0])) not in partial:
                     continue
                 for i in cols:
                     if i < len(cells) and cells[i] != MISSING:

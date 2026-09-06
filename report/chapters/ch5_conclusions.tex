@@ -174,7 +174,21 @@ reach of one well-formed hybrid query, so decomposition dilutes a ranking that
 was already good and asks an 8B model to compose across sub-answers it would
 not otherwise have had to. Whether the Planner earns its cost on the longer
 chains of 2WikiMultihopQA is the open question that dataset's ablation row
-will answer, and the graph ablation on both datasets remains to be reported.
+will answer.
+
+The graph ablation completes the HotpotQA grid with a third result that
+qualifies the architecture rather than confirming it. \texttt{agentic\_no\_kg}
+scores an exact match of 0.404 and F1 of 0.501, a paired $\Delta$F1 of
+$-0.009$ $[-0.048, +0.029]$ with $p = 0.646$, and its retrieval is
+statistically indistinguishable from the full system's --- Recall@10 of 0.820
+against 0.812, nDCG@10 of 0.766 $[0.737, 0.793]$ against 0.763 $[0.734,
+0.791]$ --- with fifteen bridge-link failures rather than seventeen. The
+knowledge graph was added to find bridge entities, and on this dataset it
+cannot be shown to find any the retriever had not already surfaced, while
+accounting for almost half of the system's tool calls and more than half of
+its median latency. The finding is not that graph navigation is useless; it is
+that two-hop questions do not exercise it, and that the case for the component
+has to be made on 2WikiMultihopQA or not at all.
 
 \textbf{What does agency cost?} Quality is reported alongside model calls per
 question, calls avoided by deterministic rules, tool invocations, plan depth,
@@ -280,14 +294,15 @@ effect sizes --- nothing here should be read as a precise one --- but
 significance is decided by the paired column and not by overlap. The grid is
 also not finished. The ablations run against the same 250-question evaluation
 split rather than a subsample; at the time of writing the six baseline and
-full-system configurations are complete on both datasets,
-\texttt{agentic\_no\_verifier} and \texttt{agentic\_no\_planner} are complete
-on HotpotQA and not started on 2WikiMultihopQA, and \texttt{agentic\_no\_kg}
-is in flight on HotpotQA, short of 250 when the tables were last generated,
-and not started on 2WikiMultihopQA. The backward
-edge's contribution is therefore a one-dataset number, the planner's is a
-one-dataset null, and the graph's is absent; each is marked so where it is
-due.
+full-system configurations are complete on both datasets and all three
+ablations are complete on HotpotQA, while on 2WikiMultihopQA
+\texttt{agentic\_no\_verifier} was still in flight when the tables were last
+generated and \texttt{agentic\_no\_planner} and \texttt{agentic\_no\_kg} had
+not started. Every ablation conclusion in this report is therefore a
+one-dataset conclusion: the backward edge's contribution is a single positive
+number, the planner's a single null pointing the wrong way, and the graph's a
+single null. Each is marked so where it is due, and none of the three is
+general until the 2WikiMultihopQA column exists.
 
 \textbf{Model scale.} Every result is conditional on a 4-bit quantised 8B model.
 The planner findings in particular are unlikely to transfer: a frontier model
