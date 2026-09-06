@@ -15,10 +15,17 @@ using the machine is a risk it does not need either.
     python scripts/dashboard.py --live          # also enables the Ask tab
     python scripts/dashboard.py --port 8123
 
-The Ask tab is off by default and the reason is not tidiness. Answering one
-question loads the reranker, the embedder and the NLI model, and on an 8 GB
-card that is the same VRAM an evaluation run is holding. Enabling it while a
-sweep is going is how a sweep dies.
+The Ask tab is off by default, but the cost of turning it on is smaller than
+it first looks. ``config/config.yaml`` puts every query-time encoder on the
+CPU -- ``dense.query_device``, ``rerank.device`` and ``verifier.nli_device``
+are all ``cpu``, so the whole card belongs to Ollama. A live question adds no
+VRAM. What it adds is contention for Ollama's generation slot: with
+``OLLAMA_NUM_PARALLEL=1`` the requests queue, so asking during an evaluation
+run makes both slower rather than putting either at risk.
+
+The default stays off anyway. Those device settings are configuration, not
+physics, and a card that is 6.4 GB into 8.1 GB has no room for the version of
+this where somebody has set them back to ``cuda``.
 """
 
 from __future__ import annotations
@@ -341,9 +348,15 @@ def ask_live(question: str, dataset: str, config_name: str) -> dict:
     )
     started = time.perf_counter()
     state = system.run(qid, question, gold=None, state=state)
+    # The transition path lives on the orchestrator, not on the state, and
+    # ``build_trace_record`` defaults it to empty. During an evaluation the
+    # TraceWriter supplies it; here nothing does unless it is passed, and a
+    # live question would render with a blank state-machine panel -- the one
+    # panel that shows the loop.
     record = build_trace_record(
         state, run_id="dashboard", seed=int(cfg.get("project.seed", 42)),
         model=str(cfg.get("llm.default_model", "")),
+        transitions=tuple(getattr(system, "transitions", ()) or ()),
     )
     record["_wall_s"] = time.perf_counter() - started
     record["_notes"] = list(getattr(pipeline, "notes", ()) or ())
@@ -416,8 +429,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send({"error": "not found"}, 404)
         if not LIVE_ENABLED:
             return self._send({
-                "error": "live answering is disabled. Restart with --live, and "
-                         "only when no evaluation run is using the GPU."
+                "error": "live answering is disabled. Restart with --live. "
+                         "It queues behind a running evaluation rather than "
+                         "competing with it, so long as the encoders are on CPU."
             }, 403)
 
         length = int(self.headers.get("Content-Length") or 0)
@@ -454,7 +468,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument(
         "--live", action="store_true",
-        help="enable the Ask tab. Needs Ollama, and needs the GPU to be free.",
+        help="enable the Ask tab. Needs Ollama. Queues behind a running sweep "
+             "rather than competing with it, as long as the encoders stay on CPU.",
     )
     parser.add_argument(
         "--sweep-pid", type=int, default=None,

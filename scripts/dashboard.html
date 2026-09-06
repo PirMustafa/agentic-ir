@@ -483,13 +483,16 @@ async function loadTables() {
 function renderAskGuard() {
   const g = $('#askguard');
   if (STATE.live) {
-    g.innerHTML = '<div class="note">Live answering is on. This loads the reranker, '
-      + 'embedder and NLI model onto the GPU. If an evaluation run is going, stop this first.</div>';
+    g.innerHTML = '<div class="note">Live answering is on. The encoders run on CPU, so this '
+      + 'adds no VRAM — it queues behind any evaluation run for Ollama\'s single generation '
+      + 'slot, which makes both slower. Expect 15–60s.</div>';
     $('#asend').disabled = false;
   } else {
     g.innerHTML = '<div class="note">Live answering is <b>disabled</b>. Restart with '
-      + '<span class="mono">python scripts/dashboard.py --live</span> — and only when '
-      + 'no evaluation run is using the GPU.</div>';
+      + '<span class="mono">python scripts/dashboard.py --live</span>. It queues behind a '
+      + 'running evaluation rather than competing with it, as long as '
+      + '<span class="mono">query_device</span>, <span class="mono">rerank.device</span> and '
+      + '<span class="mono">nli_device</span> are still <span class="mono">cpu</span>.</div>';
     $('#asend').disabled = true;
   }
 }
