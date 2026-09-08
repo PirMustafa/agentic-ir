@@ -47,3 +47,8 @@ Thumbs.db
 
 # graphify knowledge graph (regenerable: `graphify update .`)
 graphify-out/
+
+# The improvement loop writes here; discover_runs cannot see it, so the
+# report tables are unaffected. Same treatment as results/runs.
+results/runs_v2/*
+!results/runs_v2/.gitkeep
