@@ -59,6 +59,14 @@ _THINK_BLOCK = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
 _THINK_OPEN = re.compile(r"<think>", re.IGNORECASE)
 _THINK_CLOSE = re.compile(r"</think>", re.IGNORECASE)
 _FENCED = re.compile(r"```[a-zA-Z0-9_+-]*[ \t]*\r?\n?(.*?)```", re.DOTALL)
+# ``/no_think`` is qwen3's chat-template switch for suppressing reasoning. It is
+# baked into the agents' system turn (``agents/base.py::SYSTEM_PROMPT``) as belt
+# and braces beside ``think=False``, and it wins over ``chat(think=True)``: the
+# template sees the token and emits an empty think block whatever the API flag
+# says. So it is removed from the outgoing messages whenever thinking is enabled
+# for that call, and left untouched otherwise -- with ``llm.think: false`` the
+# messages are byte-identical to the evaluated grid's.
+_NO_THINK = re.compile(r"[ \t]*/no_?think\b", re.IGNORECASE)
 
 _CORRECTION = (
     "Your previous reply could not be parsed as JSON ({error}). "
@@ -126,6 +134,8 @@ class LLMSettings:
     options: dict[str, Any]
     max_format_retries: int
     request_timeout_s: float
+    think: bool = False
+    think_agents: tuple[str, ...] | None = None
 
     @classmethod
     def from_config(cls, cfg: Config) -> "LLMSettings":
@@ -138,11 +148,32 @@ class LLMSettings:
             options=dict(cfg.get("llm.options", {}) or {}),
             max_format_retries=int(cfg.get("llm.max_format_retries", 2)),
             request_timeout_s=float(cfg.get("llm.request_timeout_s", 180)),
+            think=bool(cfg.get("llm.think", False)),
+            think_agents=_as_agent_tuple(cfg.get("llm.think_agents", None)),
         )
 
     def model_for(self, agent: str) -> str:
         """Model for ``agent``, falling back to ``llm.default_model``."""
         return str(self.models.get(agent) or self.default_model)
+
+    def think_for(self, agent: str, requested: bool | None = None) -> bool | None:
+        """Whether ``agent`` reasons on this call.
+
+        ``llm.think`` is one global switch and the callers pass it down verbatim
+        (``agents/base.py::_think``), which cannot express "thinking on the
+        synthesiser only". ``llm.think_agents`` adds that without a change in
+        any caller: when present it is authoritative -- exactly the agents named
+        there reason, every other agent does not, whatever ``llm.think`` says.
+        When it is absent the caller's own argument wins, and ``llm.think`` is
+        the fallback for a caller that passes nothing. With ``think_agents``
+        unset and ``llm.think: false`` this returns ``False`` for every agent,
+        which is what the evaluated grid ran.
+        """
+        if self.think_agents is not None:
+            return agent in self.think_agents
+        if requested is not None:
+            return requested
+        return self.think
 
     def merged_options(
         self,
@@ -515,6 +546,39 @@ def split_thinking(text: str) -> tuple[str, str | None]:
     return visible.strip(), thinking
 
 
+def _as_agent_tuple(value: Any) -> tuple[str, ...] | None:
+    """Normalise ``llm.think_agents`` into a tuple of agent names, or ``None``.
+
+    Accepts a list (``[synthesizer]``), a comma-separated string, or a mapping
+    of ``agent -> bool`` (the truthy keys are taken). An empty list is *not*
+    ``None``: it means "no agent reasons", which is a legitimate thing to pin.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+    if isinstance(value, Mapping):
+        return tuple(str(k) for k, v in value.items() if v)
+    if isinstance(value, Sequence):
+        return tuple(str(v).strip() for v in value if str(v).strip())
+    return None
+
+
+def _without_no_think(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Drop the ``/no_think`` switch from every turn, preserving everything else.
+
+    Only called when thinking is enabled for the call; see :data:`_NO_THINK`.
+    """
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        item = dict(message)
+        content = item.get("content")
+        if isinstance(content, str) and "think" in content.lower():
+            item["content"] = _NO_THINK.sub("", content).rstrip()
+        out.append(item)
+    return out
+
+
 def _strip_fences(text: str) -> str:
     """Return the body of the first markdown code fence, or the text unchanged."""
     match = _FENCED.search(text)
@@ -795,7 +859,10 @@ class OllamaClient:
         target_model = model or self.model_for(agent)
         fmt = _as_format(schema)
         call_options = self.settings.merged_options(options, overrides)
-        conversation: list[dict[str, Any]] = [dict(m) for m in messages]
+        think = self.settings.think_for(agent, think)
+        conversation: list[dict[str, Any]] = (
+            _without_no_think(messages) if think else [dict(m) for m in messages]
+        )
         max_attempts = 1 + (self.settings.max_format_retries if schema is not None else 0)
 
         started = time.perf_counter()
