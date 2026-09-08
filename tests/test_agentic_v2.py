@@ -47,6 +47,12 @@ EVALUATED_DEFAULTS = {
     "agents.synthesizer.reconcile_answer": False,
     "agents.synthesizer.answer_type_guard": False,
     "agents.verifier.evidence_ranking": "lexical_major",
+    # L1's three. ``think_agents`` being absent is what makes ``think_for``
+    # fall back to the caller's argument, which is what the grid ran; naming
+    # any agent there would change every evaluated run.
+    "llm.think": False,
+    "llm.think_agents": None,
+    "llm.options.num_predict": 1024,
 }
 
 
@@ -176,6 +182,28 @@ def test_agentic_v2_turns_all_three_on(cfg):
     assert derived.get("agents.verifier.evidence_docs") == 3
 
 
+def test_agentic_v2_carries_the_confirmed_thinking_settings(cfg):
+    """L1's KEEP is a property of the branch, not of one worktree's config.
+
+    The +0.072 (HotpotQA) / +0.140 (2Wiki) exact-match gain was measured with
+    reasoning enabled on the synthesiser and the completion budget raised to
+    hold the reasoning block. Both settings sat in the executing worktree's
+    config file, so for a while ``git checkout v2`` gave you the code that can
+    route thinking per agent beside a configuration that never asks it to.
+    This pins the decision to the branch.
+    """
+    from agentic_ir.llm import LLMSettings
+
+    derived = config_for("agentic_v2", cfg)
+    settings = LLMSettings.from_config(derived)
+    assert settings.think_for("synthesizer") is True
+    for other in ("planner", "retriever", "kg_navigator", "verifier"):
+        assert settings.think_for(other) is False, other
+    # Thinking without the budget is measurably worse than not thinking: the
+    # block runs to the cap and the answer never starts.
+    assert derived.get("llm.options.num_predict") == 5120
+
+
 def test_the_override_does_not_reach_into_the_shared_config(cfg):
     """``config_for`` derives; the process-wide instance must not be mutated."""
     config_for("agentic_v2", cfg)
@@ -184,12 +212,15 @@ def test_the_override_does_not_reach_into_the_shared_config(cfg):
 
 
 def test_the_override_touches_nothing_else():
-    """Anything beyond these four keys is a change nobody asked for."""
+    """Anything beyond these seven keys is a change nobody asked for."""
     assert set(ABLATION_OVERRIDES["agentic_v2"]) == {
         "agents.planner.template_shortcut",
         "agents.synthesizer.reconcile_answer",
         "agents.synthesizer.answer_type_guard",
         "agents.verifier.evidence_ranking",
+        "llm.think",
+        "llm.think_agents",
+        "llm.options.num_predict",
     }
 
 

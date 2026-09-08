@@ -143,6 +143,27 @@ ABLATION_OVERRIDES: dict[str, dict[str, Any]] = {
         # change under agentic_no_planner), and set for its meaning.
         "agents.synthesizer.answer_type_guard": True,
         "agents.verifier.evidence_ranking": "rank_major",   # 1C
+        # L1, confirmed at n=250 on both datasets (improvement-loop.log.md,
+        # Loop 2): reasoning on the synthesis call only. These three lived in
+        # the L1 worktree's config while it was being measured, which left the
+        # branch carrying the *mechanism* without the *decision* -- ``v2`` ran
+        # ``agentic_v2`` with thinking off. They belong here, beside the other
+        # fixes, for the same reason those are here: ``config.yaml`` keeps the
+        # evaluated values (think: false, num_predict 1024) so ``agentic_full``
+        # is untouched, and the override is what defines the new system.
+        #
+        # ``think_agents`` is authoritative in :meth:`LLMSettings.think_for`,
+        # so naming the synthesiser is what switches reasoning on; ``llm.think``
+        # is set to the value the confirmed run carried rather than because
+        # anything reads it here. ``num_predict`` is not cosmetic: at 1024 the
+        # reasoning block eats the whole completion budget and the synthesiser
+        # returns no answer at all -- measured, and the reason the run
+        # ``L1_starve_np5120`` exists. Per-call ``num_predict`` (retriever
+        # 48/64, kg 96, verifier 256) overrides this, so only the synthesiser
+        # sees 5120.
+        "llm.think": True,
+        "llm.think_agents": ["synthesizer"],
+        "llm.options.num_predict": 5120,
     },
 }
 

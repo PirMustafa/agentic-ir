@@ -74,6 +74,14 @@ llm:
   # At ~30-45 tok/s that is 10-20s of pure waste per call, so it is suppressed
   # three ways: this flag, a /no_think system suffix, and response stripping.
   think: false
+  # Which agents reason, overriding `think` for exactly those. null = the
+  # setting is absent and every caller's own argument wins, which is what the
+  # nine evaluated systems ran; [] would mean "no agent reasons", a different
+  # statement. `agentic_v2` sets [synthesizer] via ABLATION_OVERRIDES -- see
+  # eval/run_eval.py -- together with the num_predict the reasoning block
+  # needs. Declared here, rather than left absent, so the default is a value
+  # this file states instead of one a KeyError implies.
+  think_agents:
   # Retries on malformed structured output before falling back to a
   # deterministic default. Logged as `parse_failures` in the run trace.
   max_format_retries: 2
