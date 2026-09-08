@@ -128,21 +128,42 @@ ABLATION_OVERRIDES: dict[str, dict[str, Any]] = {
     "agentic_no_planner": {"agents.planner.template_shortcut": False},
     "agentic_no_kg": {"agents.kg.enabled": False},
     "agentic_no_verifier": {"agents.verifier.enabled": False},
-    # Accuracy plan R2.4. Not one of the nine evaluated systems, and absent
-    # from ``config.yaml``'s ``evaluation.configurations`` so that
-    # ``tables.py`` cannot render it: the one-node plan (from
-    # :data:`ONE_NODE_CONFIGS`, not from the override below -- see there)
-    # carrying the two Round 1 fixes that survived a breakage count. Both flags
-    # ship at the evaluated behaviour in ``config.yaml`` and are switched on
-    # only here, so ``agentic_full`` is unchanged by their existence.
+    # Accuracy plan R2.4, as the improvement loop left it. Not one of the nine
+    # evaluated systems, and absent from ``config.yaml``'s
+    # ``evaluation.configurations`` so that ``tables.py`` cannot render it: the
+    # one-node plan (from :data:`ONE_NODE_CONFIGS`, not from the override below
+    # -- see there) plus reasoning on the synthesis call, which is the one
+    # change the loop confirmed at n=250 on both datasets (HotpotQA exact match
+    # 0.452 -> 0.524, 2Wiki 0.316 -> 0.456; both intervals exclude zero).
+    # Everything it sets ships at the evaluated behaviour in ``config.yaml``
+    # and is switched on only here, so ``agentic_full`` is unchanged by its
+    # existence.
     "agentic_v2": {
         # Recorded in the trace's config snapshot; already the config default.
         "agents.planner.template_shortcut": False,
-        "agents.synthesizer.reconcile_answer": True,        # 1A
-        # 1B. Inert in a one-node system (measured: 0 of 250 answer types
-        # change under agentic_no_planner), and set for its meaning.
-        "agents.synthesizer.answer_type_guard": True,
-        "agents.verifier.evidence_ranking": "rank_major",   # 1C
+        # 1A, 1B and 1C are NOT here, and their absence is the result of a
+        # measurement rather than an oversight. All three shipped in this
+        # override until Loop 4, when running the bundle exposed what bundling
+        # them had hidden: on 30 paired questions against the configuration
+        # that was actually confirmed, `rank_major` (1C) cost 2x the median
+        # latency (36.9s vs 17.6s) and lost a synthesis call on 10% of
+        # questions against 0%, for a paired exact-match difference of
+        # +0.0000. A hash-gated probe put the direction beyond the runs
+        # themselves -- 7 empty completions in 22 attempts under `rank_major`,
+        # 0 in 15 under `lexical_major` -- but at Fisher p ~ 0.22 that is
+        # suggestive, not established, and it is not the reason the flag is
+        # off. The reason is the cost: latency and lost calls bought no
+        # measurable accuracy.
+        #
+        # 1A recovers 0 questions on this base and 1B changes 0 answer types
+        # under a one-node plan, both measured by offline replay over 500
+        # traces in Loop 1. Inert changes do not earn a place in a
+        # configuration whose numbers someone will cite.
+        #
+        # What remains is exactly the system the confirmation runs measured:
+        # the one-node plan plus reasoning on the synthesis call. The three
+        # fixes keep their code, their flags and their tests, and any of them
+        # can be switched on for a run that intends to measure it.
         # L1, confirmed at n=250 on both datasets (improvement-loop.log.md,
         # Loop 2): reasoning on the synthesis call only. These three lived in
         # the L1 worktree's config while it was being measured, which left the

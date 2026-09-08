@@ -131,7 +131,7 @@ def test_agentic_v2_gets_the_one_node_plan_from_build_system_not_the_override():
     [
         ("agentic_full", False, False, "lexical_major"),
         ("agentic_no_planner", True, False, "lexical_major"),
-        ("agentic_v2", True, True, "rank_major"),
+        ("agentic_v2", True, False, "lexical_major"),
     ],
 )
 def test_build_system_wires_the_flags_through(
@@ -155,6 +155,28 @@ def test_build_system_wires_the_flags_through(
     assert synth is not None and synth.reconcile is reconcile
 
 
+def test_the_unshipped_fixes_still_wire_through_when_asked_for(cfg):
+    """No configuration sets them, so this is what keeps their wiring honest.
+
+    L0's two fixes are code the loop measured and declined to ship, not code
+    it deleted: the flags remain, and a run that wants to measure one can
+    still switch it on. Nothing else in the suite now builds a system with
+    them enabled, so without this test the seam between the flag and the
+    object could rot unnoticed.
+    """
+    derived = cfg.with_overrides(
+        {
+            "agents.synthesizer.reconcile_answer": True,
+            "agents.verifier.evidence_ranking": "rank_major",
+        }
+    )
+    pipeline = Pipeline(dataset="hotpotqa", registry=ToolRegistry())
+    system = build_system("agentic_v2", "hotpotqa", cfg=derived, pipeline=pipeline)
+    assert system.evidence_ranking == "rank_major"
+    synth = system._optional("synthesizer")
+    assert synth is not None and synth.reconcile is True
+
+
 # ---------------------------------------------------------------------------
 # The flags
 # ---------------------------------------------------------------------------
@@ -172,11 +194,38 @@ def test_no_evaluated_configuration_turns_a_fix_on(cfg, config_name):
         assert derived.get(dotted) == evaluated, (config_name, dotted)
 
 
-def test_agentic_v2_turns_all_three_on(cfg):
+#: The three fixes L0 built and the loop declined to ship. Their flags exist,
+#: their tests pass, and no configuration in the tree sets them.
+UNSHIPPED_FIXES = (
+    "agents.synthesizer.reconcile_answer",
+    "agents.synthesizer.answer_type_guard",
+    "agents.verifier.evidence_ranking",
+)
+
+
+@pytest.mark.parametrize("dotted", UNSHIPPED_FIXES)
+def test_no_configuration_at_all_turns_an_unshipped_fix_on(cfg, dotted):
+    """Including ``agentic_v2``, which is the one that used to."""
+    for config_name in ("agentic_full", *AGENTIC_CONFIGS, "agentic_v2"):
+        derived = config_for(config_name, cfg)
+        assert derived.get(dotted) == EVALUATED_DEFAULTS[dotted], config_name
+
+
+def test_agentic_v2_ships_none_of_the_three_unmeasured_fixes(cfg):
+    """The configuration is what the confirmation runs measured, and no more.
+
+    All three shipped here until Loop 4. 1A recovers 0 questions on this base
+    and 1B changes 0 answer types under a one-node plan, both from offline
+    replay over 500 traces. 1C is the one that mattered: on 30 paired
+    questions it cost 2x the median latency and lost a synthesis call on 10%
+    of them against 0%, for a paired exact-match difference of +0.0000. None
+    of the three earned a place in a configuration whose numbers get cited,
+    and this test is what stops one drifting back in.
+    """
     derived = config_for("agentic_v2", cfg)
-    assert derived.get("agents.synthesizer.reconcile_answer") is True
-    assert derived.get("agents.synthesizer.answer_type_guard") is True
-    assert derived.get("agents.verifier.evidence_ranking") == "rank_major"
+    assert derived.get("agents.synthesizer.reconcile_answer") is False
+    assert derived.get("agents.synthesizer.answer_type_guard") is False
+    assert derived.get("agents.verifier.evidence_ranking") == "lexical_major"
     # 2A stays off: sentence-level widening measured net zero once KG rows were
     # counted, and is explicitly out of scope for this configuration.
     assert derived.get("agents.verifier.evidence_docs") == 3
@@ -212,12 +261,9 @@ def test_the_override_does_not_reach_into_the_shared_config(cfg):
 
 
 def test_the_override_touches_nothing_else():
-    """Anything beyond these seven keys is a change nobody asked for."""
+    """Anything beyond these four keys is a change nobody asked for."""
     assert set(ABLATION_OVERRIDES["agentic_v2"]) == {
         "agents.planner.template_shortcut",
-        "agents.synthesizer.reconcile_answer",
-        "agents.synthesizer.answer_type_guard",
-        "agents.verifier.evidence_ranking",
         "llm.think",
         "llm.think_agents",
         "llm.options.num_predict",
