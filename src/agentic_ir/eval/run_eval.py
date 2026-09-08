@@ -56,6 +56,7 @@ __all__ = [
     "ABLATION_OVERRIDES",
     "AGENTIC_CONFIGS",
     "BASELINE_CONFIGS",
+    "ONE_NODE_CONFIGS",
     "BASELINE_MODULES",
     "CONFIGURATIONS",
     "Pipeline",
@@ -65,6 +66,7 @@ __all__ = [
     "config_for",
     "configurations",
     "gold_doc_ids",
+    "is_agentic",
     "latest_run_dir",
     "load_baseline",
     "load_pipeline",
@@ -87,10 +89,30 @@ CONFIGURATIONS: tuple[str, ...] = (
     "agentic_full", "agentic_no_planner", "agentic_no_kg", "agentic_no_verifier",
 )
 
-#: Configurations driven by :class:`~agentic_ir.orchestrator.Orchestrator`.
+#: Configurations driven by :class:`~agentic_ir.orchestrator.Orchestrator`
+#: **and rendered into the report's grid**. ``eval/tables.py`` reads this tuple
+#: to decide which rows an ablation table carries, so a configuration added
+#: after the grid was evaluated -- ``agentic_v2`` -- must NOT be listed here or
+#: it gains a row in a report it was never run for. For the runtime question
+#: ("does this need an Orchestrator and an LLM client?") use :func:`is_agentic`,
+#: which is true of names absent from this tuple.
 AGENTIC_CONFIGS: tuple[str, ...] = (
     "agentic_full", "agentic_no_planner", "agentic_no_kg", "agentic_no_verifier",
 )
+
+#: Configurations whose Planner is replaced by :class:`NoPlanner`: the plan is
+#: the verbatim question as a single node, and no decomposition call is made.
+#:
+#: ``agentic_v2`` is here rather than only in :data:`ABLATION_OVERRIDES`
+#: because the one-node plan is **not** a config switch. The accuracy plan
+#: (R2.4) specifies ``agentic_v2`` with ``agents.planner.template_shortcut:
+#: False`` against the comment "= agentic_no_planner". That is wrong, and
+#: quietly so: ``false`` is already the value in ``config.yaml``, so as an
+#: override it is a no-op, and ``agentic_no_planner``'s decomposition-free
+#: behaviour comes entirely from this substitution in :func:`build_system`. A
+#: configuration that took only the override would run the full LLM Planner and
+#: would not be the one-node system at all.
+ONE_NODE_CONFIGS: tuple[str, ...] = ("agentic_no_planner", "agentic_v2")
 
 #: Configurations owned by ``baselines/`` -- a sibling milestone. Imported
 #: lazily, by name, so this module runs before they land.
@@ -106,6 +128,22 @@ ABLATION_OVERRIDES: dict[str, dict[str, Any]] = {
     "agentic_no_planner": {"agents.planner.template_shortcut": False},
     "agentic_no_kg": {"agents.kg.enabled": False},
     "agentic_no_verifier": {"agents.verifier.enabled": False},
+    # Accuracy plan R2.4. Not one of the nine evaluated systems, and absent
+    # from ``config.yaml``'s ``evaluation.configurations`` so that
+    # ``tables.py`` cannot render it: the one-node plan (from
+    # :data:`ONE_NODE_CONFIGS`, not from the override below -- see there)
+    # carrying the two Round 1 fixes that survived a breakage count. Both flags
+    # ship at the evaluated behaviour in ``config.yaml`` and are switched on
+    # only here, so ``agentic_full`` is unchanged by their existence.
+    "agentic_v2": {
+        # Recorded in the trace's config snapshot; already the config default.
+        "agents.planner.template_shortcut": False,
+        "agents.synthesizer.reconcile_answer": True,        # 1A
+        # 1B. Inert in a one-node system (measured: 0 of 250 answer types
+        # change under agentic_no_planner), and set for its meaning.
+        "agents.synthesizer.answer_type_guard": True,
+        "agents.verifier.evidence_ranking": "rank_major",   # 1C
+    },
 }
 
 #: ``config_name -> (module, candidate factory names)``. The factory names are a
@@ -132,6 +170,21 @@ def configurations(cfg: Config | None = None) -> tuple[str, ...]:
     cfg = cfg or load_config()
     configured = tuple(str(c) for c in cfg.get("evaluation.configurations", ()) or ())
     return configured or CONFIGURATIONS
+
+
+def is_agentic(config_name: str) -> bool:
+    """Does ``config_name`` run through the Orchestrator rather than a baseline?
+
+    Defined as the complement of :data:`BASELINE_CONFIGS`, which is exactly the
+    branch :func:`build_system` takes, rather than as membership of
+    :data:`AGENTIC_CONFIGS`. The two agreed while the evaluated grid was the
+    whole world; they stop agreeing the moment a configuration exists that must
+    run but must not be reported. Asking the membership question instead would
+    leave such a run with ``client=None`` and no NLI preflight -- an
+    orchestrator that degrades to extractive answers without raising, which
+    produces a plausible-looking number and a wrong one.
+    """
+    return config_name not in BASELINE_CONFIGS
 
 
 # ---------------------------------------------------------------------------
@@ -643,7 +696,7 @@ def build_system(
         except Exception:  # noqa: BLE001
             verifier = None
 
-    planner = NoPlanner(cfg) if config_name == "agentic_no_planner" else None
+    planner = NoPlanner(cfg) if config_name in ONE_NODE_CONFIGS else None
     return Orchestrator(
         pipeline.registry,
         cfg=cfg,
@@ -828,7 +881,7 @@ def uses_verifier(config_name: str, cfg: Config) -> bool:
     covers precisely the runs whose numbers the NLI encoder can silently
     corrupt and no others.
     """
-    return config_name in AGENTIC_CONFIGS and bool(cfg.get("agents.verifier.enabled", True))
+    return is_agentic(config_name) and bool(cfg.get("agents.verifier.enabled", True))
 
 
 def preflight_or_abort(config_name: str, cfg: Config) -> str | None:
@@ -914,7 +967,7 @@ def run_eval(
     done = _completed_qids(writer.traces_path, retry_failed=spec.retry_failed)
     pending = [g for g in golds if g.qid not in done]
 
-    if client is None and spec.config_name in AGENTIC_CONFIGS:
+    if client is None and is_agentic(spec.config_name):
         from ..llm import get_client
 
         client = get_client()
@@ -1324,14 +1377,29 @@ def write_scores_csv(path: Path, scores: Mapping[str, Mapping[str, float]]) -> P
 # CLI
 # ---------------------------------------------------------------------------
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(cfg: Config | None = None) -> argparse.ArgumentParser:
+    """The CLI.
+
+    ``--config`` accepts whatever ``evaluation.configurations`` names, not the
+    literal :data:`CONFIGURATIONS`. The nine-name tuple is the *report's* grid
+    and ``eval/tables.py`` renders a row for each of them, so a configuration
+    that must be runnable but must not be reported -- ``agentic_v2`` -- cannot
+    be added there. Reading the config file instead means such a system is
+    enabled by listing it in a variant config (``config/config.worktree.yaml``)
+    and by nothing else, and ``config.yaml`` keeps naming exactly the nine
+    systems the report describes.
+
+    The fallback in :func:`configurations` keeps the old behaviour for a
+    config file that says nothing, so ``--help`` still lists the nine.
+    """
+    choices = configurations(cfg)
     parser = argparse.ArgumentParser(
         prog="python -m agentic_ir.eval.run_eval",
         description="Run one configuration on one dataset, with checkpointing.",
     )
     parser.add_argument("--dataset", default="hotpotqa", choices=("hotpotqa", "twowiki"))
     parser.add_argument("--config", dest="config_name", default="agentic_full",
-                        choices=CONFIGURATIONS, help="one of evaluation.configurations")
+                        choices=choices, help="one of evaluation.configurations")
     parser.add_argument("--limit", type=int, default=None,
                         help="evaluate only the first N questions of the slice")
     parser.add_argument("--split", default="eval", choices=("eval", "calib"))
@@ -1351,8 +1419,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    # The config is loaded before parsing, not after: it is what says which
+    # configuration names are legal.
     cfg = load_config()
+    args = build_parser(cfg).parse_args(argv)
     spec = RunSpec(
         config_name=args.config_name,
         dataset=args.dataset,

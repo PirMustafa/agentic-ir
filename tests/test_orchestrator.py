@@ -20,7 +20,7 @@ from agentic_ir.agents.planner import _finish
 from agentic_ir.agents.retriever import RetrievalAgent
 from agentic_ir.config import load_config
 from agentic_ir.orchestrator import TRANSITIONS, Orchestrator
-from agentic_ir.state import Budget, QuestionState
+from agentic_ir.state import Budget, QuestionState, jaccard, normalise_text
 from agentic_ir.tools.registry import ToolRegistry, ToolSpec
 from agentic_ir.trace import TraceWriter, build_trace_record
 from agentic_ir.types import (
@@ -29,8 +29,10 @@ from agentic_ir.types import (
     Passage,
     Plan,
     ReplanDirective,
+    RetrievalResult,
     ScoredPassage,
     SubQuery,
+    ToolSelection,
     VerificationResult,
 )
 from tests.test_planner import COMPARISON_Q, StubBM25, StubClient
@@ -674,3 +676,182 @@ def test_heuristic_routing_makes_the_whole_run_cost_zero_llm_calls():
     assert state.budget.llm_calls == 0
     assert state.budget.llm_calls_saved == 2
     assert state.budget.tool_calls >= 2
+
+
+# ---------------------------------------------------------------------------
+# Evidence pool construction (build_evidence)
+# ---------------------------------------------------------------------------
+
+def _doc(title: str, rank: int, sentences: tuple[str, ...]) -> ScoredPassage:
+    return ScoredPassage(
+        passage=Passage(
+            doc_id=f"hotpotqa:{title.replace(' ', '_')}",
+            title=title,
+            text=" ".join(sentences),
+            sentences=sentences,
+            source="hotpotqa",
+        ),
+        score=9.0 - rank,
+        rank=rank,
+        provenance="rerank",
+    )
+
+
+def _evidence_state(*docs: ScoredPassage, query: str) -> QuestionState:
+    state = QuestionState(qid="e", question=query, dataset="hotpotqa", config_name="test")
+    state.results["q1"] = RetrievalResult(
+        subquery_id="q1",
+        query_text=query,
+        selection=ToolSelection(
+            tool="hybrid_search", selector="rule", rule_id="r", reason="test"
+        ),
+        passages=tuple(docs),
+    )
+    return state
+
+
+def _evidence_orch(
+    *,
+    evidence_docs: int,
+    max_evidence: int = 20,
+    ranking: str = "rank_major",
+) -> Orchestrator:
+    orch = orchestrator(planner=FakePlanner(plan_of(SubQuery(id="q1", text="q"))))
+    orch.evidence_docs = evidence_docs
+    orch.evidence_passages = evidence_docs
+    orch.evidence_ranking = ranking
+    orch.max_evidence = max_evidence
+    orch.kg_enabled = False
+    return orch
+
+
+def test_evidence_ranking_defaults_to_the_evaluated_key():
+    """The 1C fix is selectable, not imposed: the default is the evaluated one.
+
+    ``agentic_full`` is a row in a finished report. Its evidence pool has to
+    keep being the pool that produced that row, so ``build_evidence`` ships the
+    key the eighteen evaluated runs used and the correction is reached only by
+    naming it. This asserts the default off the *configuration*, not off a test
+    fixture, which is the only version of the claim that means anything.
+    """
+    orch = orchestrator(planner=FakePlanner(plan_of(SubQuery(id="q1", text="q"))))
+    assert orch.evidence_ranking == "lexical_major"
+
+
+def test_lexical_major_reproduces_the_pre_1c_scores_exactly():
+    """The default path is the old arithmetic, to the last bit.
+
+    Not "ranks the same" -- the same float. Evidence scores are written into
+    every trace and re-sorted by the Verifier and the Synthesizer, so a pool
+    that merely ordered the same would still be a different experiment. The
+    expected values are the committed formula, ``1/(rrf_k + rank + 1) +
+    0.05 * jaccard``, recomputed here rather than imported.
+    """
+    query = "Who wrote Maria Golovin?"
+    sentences = ("Gian Carlo Menotti wrote Maria Golovin.", "It premiered in 1958.")
+    state = _evidence_state(
+        _doc("Top", 0, sentences),
+        _doc("Next", 1, ("Maria Golovin is an opera.",)),
+        query=query,
+    )
+    orch = _evidence_orch(evidence_docs=3, ranking="lexical_major")
+    evidence = orch.build_evidence(state)
+
+    query_terms = normalise_text(query)
+    expected = {}
+    for rank, sents in enumerate((sentences, ("Maria Golovin is an opera.",))):
+        for sentence in sents:
+            score = 1.0 / (orch.rrf_k + rank + 1)
+            score += 0.05 * jaccard(normalise_text(sentence), query_terms)
+            expected[sentence] = round(float(score), 6)
+
+    assert {e.text: e.score for e in evidence.values()} == expected
+
+
+def test_evidence_ranking_is_rank_major_not_lexical():
+    """1C: the cross-encoder's ordering decides; lexical overlap only breaks ties.
+
+    The rank-1 sentence here is a verbatim copy of the query, so its Jaccard is
+    1.0 against the rank-0 sentence's 0.0. Under the previous key
+    (``1/(rrf_k+rank+1) + 0.05*jaccard``) the lexical term spanned 0.05 against
+    a rank span of 0.00052, so the copy won. Rank must win now.
+    """
+    query = "Which Italian composer wrote Maria Golovin?"
+    state = _evidence_state(
+        _doc("Top", 0, ("Gian Carlo Menotti was born in Cadegliano.",)),
+        _doc("Next", 1, (query,)),
+        query=query,
+    )
+    evidence = _evidence_orch(evidence_docs=10).build_evidence(state)
+    order = [e.title for e in sorted(evidence.values(), key=lambda e: -e.score)]
+    assert order[0] == "Top", order
+
+
+def test_evidence_spreads_across_documents_at_realistic_lengths():
+    """2A: the budget is spent across the ranking, not on the first few docs.
+
+    Retrieved HotpotQA passages average 3.9 sentences (measured over the 4,665
+    documents in the 250-question eval traces; only 1.6% carry ten or more), so
+    a 20-sentence budget spans roughly five documents. Under whole-document
+    ingestion of the top ``evidence_passages: 3`` that budget stopped at three
+    documents however short they were; here it reaches ``D4``.
+    """
+    query = "Who wrote Maria Golovin?"
+    docs = [
+        _doc(f"D{i}", i, tuple(f"Document {i} sentence {j}." for j in range(4)))
+        for i in range(8)
+    ]
+    evidence = _evidence_orch(evidence_docs=10, max_evidence=20).build_evidence(
+        _evidence_state(*docs, query=query)
+    )
+    assert {e.title for e in evidence.values()} == {f"D{i}" for i in range(5)}
+
+
+def test_a_long_top_ranked_document_may_still_fill_the_budget():
+    """The deliberate limit of a strictly rank-major key -- pinned, not fixed.
+
+    Rank dominance means every sentence of a rank-0 document outranks every
+    sentence below it, so a pathologically long top hit still spends the whole
+    budget. The obvious guard, a per-document sentence cap, was replayed over
+    the 250-question eval traces and measured *worse*: 148 complete gold pools
+    at cap 4 and 144 at cap 3, against 149 uncapped. Gold supporting facts
+    cluster within a document (88 of 250 questions need two sentences from one,
+    11 need three or more), so capping cuts gold before it cuts filler. Change
+    this only against a fresh replay.
+    """
+    query = "Who wrote Maria Golovin?"
+    state = _evidence_state(
+        _doc("Bloated", 0, tuple(f"Filler sentence number {i}." for i in range(20))),
+        _doc("Gold", 1, ("Gian Carlo Menotti wrote Maria Golovin.",)),
+        query=query,
+    )
+    evidence = _evidence_orch(evidence_docs=10, max_evidence=20).build_evidence(state)
+    assert {e.title for e in evidence.values()} == {"Bloated"}
+
+
+def test_evidence_docs_widens_the_pool_past_evidence_passages():
+    """2A: documents below the legacy ``evidence_passages`` cut still contribute."""
+    query = "Who wrote Maria Golovin?"
+    docs = [_doc(f"D{i}", i, (f"Sentence from document {i}.",)) for i in range(6)]
+    state = _evidence_state(*docs, query=query)
+    evidence = _evidence_orch(evidence_docs=6).build_evidence(state)
+    assert {e.title for e in evidence.values()} == {f"D{i}" for i in range(6)}
+
+    narrow = _evidence_orch(evidence_docs=3).build_evidence(state)
+    assert {e.title for e in narrow.values()} == {"D0", "D1", "D2"}
+
+
+def test_passage_evidence_scores_stay_below_kg_evidence():
+    """Passage scores are normalised into (0, 0.1].
+
+    The verifier and the synthesiser re-sort the merged pool by score, and KG
+    edge evidence scores from 0.26 upwards, so this band is what keeps the
+    existing KG-above-passage ordering intact across the ranking change.
+    """
+    query = "Who wrote Maria Golovin?"
+    docs = [_doc(f"D{i}", i, (f"Sentence from document {i}.",)) for i in range(10)]
+    evidence = _evidence_orch(evidence_docs=10).build_evidence(
+        _evidence_state(*docs, query=query)
+    )
+    scores = [e.score for e in evidence.values()]
+    assert scores and all(0.0 < v <= 0.1 for v in scores), scores

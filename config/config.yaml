@@ -162,6 +162,24 @@ agents:
     max_seeds: 4                 # entity seeds per sub-query
     llm_link_on_empty: false     # alias matching finding nothing does NOT buy a model call
     entity_linker: alias_match   # alias_match | llm
+  synthesizer:
+    # Repair `answer` against the model's own `answer_sentence` after parsing
+    # (accuracy plan 1A): see agents/synthesizer.py::reconcile_answer. false is
+    # what the evaluated grid ran and therefore the default; agentic_v2 sets it
+    # true. Offline over 500 traces (the 250-question agentic_full eval run and
+    # the 250-question agentic_no_planner eval run): 0 correct answers broken.
+    reconcile_answer: false
+    # Forbid a plan node from flipping the final answer type into or out of
+    # yes/no (accuracy plan 1B): see agents/synthesizer.py::infer_answer_type.
+    # The plan calls this an unconditional correctness fix. It cannot be one:
+    # infer_answer_type decides the answer_type rendered into the synthesis
+    # prompt, and replaying both 250-question eval traces shows the guard
+    # changing that type on 12 of agentic_full's 250 questions -- twelve
+    # questions where agentic_full would stop being the run the report
+    # describes. It changes 0 of 250 under agentic_no_planner, whose plans are
+    # a single "string" node, so gating it costs the one-node systems nothing.
+    # false = evaluated behaviour; agentic_v2 sets it true.
+    answer_type_guard: false
   verifier:
     enabled: true
     method: nli_plus_llm         # nli | llm | nli_plus_llm
@@ -178,7 +196,40 @@ agents:
     entail_target: sentence
     entail_threshold: 0.5        # NLI entailment probability that counts as support
     contradiction_threshold: 0.7 # above this, a premise is recorded as contradicting
-    evidence_passages: 3         # passages per sub-query the orchestrator turns into evidence
+    evidence_passages: 3         # documents per sub-query ingested WHOLE under
+                                 # evidence_ranking: lexical_major. Also the
+                                 # fallback width for evidence_docs, so a config
+                                 # predating that knob still loads.
+    # How the passage sentences of orchestrator.py::build_evidence are ordered.
+    #   lexical_major  -- 1/(rrf_k + rank + 1) + 0.05*jaccard, over the top
+    #                     `evidence_passages` documents. What the evaluated grid
+    #                     ran, and therefore the default.
+    #   rank_major     -- (n_docs - rank) + 0.001*jaccard, over the top
+    #                     `evidence_docs` documents, normalised into (0, 0.1].
+    #                     Accuracy plan 1C; selected by agentic_v2.
+    # lexical_major is a measured defect: across the three ranks it uses, its
+    # rank term spans 0.00052 and its lexical term spans 0.05 -- 96x -- so
+    # lexical overlap is the primary sort key and the cross-encoder is the
+    # tiebreaker. It stays the default because eighteen evaluated runs were
+    # produced under it; the fix is selectable, not imposed. Same precedent as
+    # entail_target above. Offline over the 250-question eval traces, KG rows
+    # included: 149 complete gold pools -> 152 (4 gained, 1 lost).
+    evidence_ranking: lexical_major
+    # Documents per sub-query whose sentences compete for the max_evidence
+    # slots under evidence_ranking: rank_major. Sentences are scored
+    # individually, so document coverage is decoupled from the sentence budget.
+    # Read only under rank_major; lexical_major uses evidence_passages.
+    #
+    # Held at 3 -- the width whole-document ingestion used -- because widening
+    # it is a measured wash. Complete gold pools over the 250-question eval
+    # traces, docs 3/5/10: 149 -> 134 -> 118 under the old lexical-major key,
+    # 152 -> 149 -> 149 under the rank-major one. Rank-major makes widening
+    # safe but not profitable: a wider passage pool saturates max_evidence,
+    # and KG evidence only fills what passages leave over, so the sentences
+    # gained are paid for by evicted KG rows (on calib, 27/50 questions had KG
+    # evidence at docs=3 and 0/50 at docs=10). Raise this only once the KG has
+    # a reserved quota.
+    evidence_docs: 3
     require_citations: true
     max_evidence: 20
     # Call the LLM adjudicator only inside +/- this band around the threshold.

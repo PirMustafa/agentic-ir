@@ -140,6 +140,23 @@ class Orchestrator:
         self.verifier_enabled = bool(self.cfg.get("agents.verifier.enabled", True))
         self.max_evidence = int(self.cfg.get("agents.verifier.max_evidence", 20))
         self.evidence_passages = int(self.cfg.get("agents.verifier.evidence_passages", 3))
+        # Documents per sub-query whose sentences *compete* for the evidence
+        # budget. Distinct from ``evidence_passages``, which meant "documents
+        # ingested whole"; see :meth:`build_evidence`. Falls back to the old
+        # knob so a configuration predating this one still loads.
+        self.evidence_docs = int(
+            self.cfg.get("agents.verifier.evidence_docs", 0) or self.evidence_passages
+        )
+        #: Which key orders the passage sentences of :meth:`build_evidence`.
+        #: ``"lexical_major"`` is the shipped default and reproduces the
+        #: eighteen evaluated runs exactly -- `agentic_full` must keep meaning
+        #: what the report says it means. ``"rank_major"`` is the corrected key
+        #: (accuracy plan 1C) and is what ``agentic_v2`` selects. Precedent:
+        #: ``agents.verifier.entail_target``, which ships at its evaluated
+        #: value with the correction selectable beside it.
+        self.evidence_ranking = str(
+            self.cfg.get("agents.verifier.evidence_ranking", "lexical_major")
+        )
         self.rrf_k = int(self.cfg.get("retrieval.hybrid.rrf_k", 60))
         #: Transition ids of the most recent :meth:`run`, for the trace and tests.
         self.transitions: list[str] = []
@@ -380,22 +397,89 @@ class Orchestrator:
 
         Sentence granularity matches the supporting-fact ground truth, keeps NLI
         premises short enough for DeBERTa to score well, and keeps the
-        synthesiser prompt inside ``num_ctx``. Ranking is rank-reciprocal with a
-        small lexical-overlap bonus: purely deterministic, with an explicit
-        tiebreaker, so two runs agree exactly.
+        synthesiser prompt inside ``num_ctx``.
+
+        Two keys live here, selected by ``agents.verifier.evidence_ranking``:
+
+        ``"lexical_major"`` (**the shipped default**)
+            ``1/(rrf_k + rank + 1) + 0.05 * jaccard`` over the top
+            ``evidence_passages`` documents. This is what the eighteen
+            evaluated runs ran, and it is kept selectable and default so
+            ``agentic_full`` keeps meaning what the report says it means.
+        ``"rank_major"`` (accuracy plan 1C; what ``agentic_v2`` selects)
+            described below.
+
+        Under ``rank_major``, selection is **by sentence, not by document**:
+        every sentence of the top ``evidence_docs`` documents of every
+        sub-query competes for the ``max_evidence`` slots, so document coverage
+        is decoupled from the sentence budget. The earlier version ingested the
+        top ``evidence_passages`` documents *whole*.
+
+        ``evidence_docs`` ships at 3 -- the width the whole-document version
+        used -- because widening it is a **measured wash**, and not for the
+        reason the sentence-level rewrite was expected to fix. Replayed over the
+        250-question eval traces, complete gold pools at docs 3/5/10 go
+        149 -> 134 -> 118 under the old lexical-major key and 152 -> 149 -> 149
+        under this one. Rank-major makes widening safe rather than harmful, but
+        not profitable: a wider passage pool saturates ``max_evidence``, and
+        :meth:`_kg_evidence` only ever fills the slots the passages leave over,
+        so every sentence gained past docs=3 is paid for by an evicted KG row.
+        On calib that eviction was total -- 27 of 50 questions carried KG
+        evidence before and 0 after. Widening is worth revisiting only once the
+        KG has a reserved quota rather than the remainder.
+
+        At docs=3 the pool is the same size as before, the KG contribution is
+        untouched, and the ranking fix is what is left: +3 complete pools
+        (4 gained, 1 lost). The binding constraint beyond that is the budget,
+        not coverage: ``max_evidence`` 20 -> 25 -> 30 gives 152 -> 154 -> 155.
+
+        ``rank_major`` means the retriever ordering, cross-encoder included,
+        decides, and lexical overlap only separates sentences drawn from
+        equally-ranked documents. The default key has this backwards. Across the
+        ranks it actually used the rank term spanned 0.00052 and the lexical term
+        spanned 0.05 -- 96x larger -- so lexical overlap was the primary sort key
+        and the cross-encoder was the tiebreaker; 0.0053 of extra overlap was
+        enough to jump a rank. It is a bug, and it is still the default, because
+        the alternative is silently restating eighteen published rows.
+
+        Under ``rank_major`` scores are normalised into
+        ``(0, _EVIDENCE_SCORE_CEIL]``. That band is
+        deliberate: :mod:`~agentic_ir.agents.verifier` and
+        :mod:`~agentic_ir.agents.synthesizer` re-sort the merged pool by score,
+        and KG edge evidence carries scores of its own (observed 0.26-1.0), so
+        holding passages below that floor preserves the existing
+        KG-above-passage ordering. Only the ordering *among passages* changes.
+
+        Purely deterministic, with an explicit tiebreaker, so two runs agree
+        exactly.
         """
+        rank_major = self.evidence_ranking == "rank_major"
+        # Under ``lexical_major`` the legacy knob also decides the width, so a
+        # configuration that declares ``evidence_docs`` but not the new key is
+        # unchanged in every respect rather than only in its ordering.
+        n_docs = self.evidence_docs if rank_major else self.evidence_passages
         pooled: dict[tuple[str, int], dict[str, Any]] = {}
+        # One rank step is worth 1.0 against a lexical span of
+        # _LEXICAL_TIEBREAK, so rank dominates by 1/_LEXICAL_TIEBREAK.
+        span = float(n_docs) + _LEXICAL_TIEBREAK
         for sq_id in sorted(state.results, key=_numeric_id):
             result = state.results[sq_id]
             query_terms = normalise_text(result.query_text)
-            for rank, scored in enumerate(result.passages[: self.evidence_passages]):
+            for rank, scored in enumerate(result.passages[:n_docs]):
                 passage = scored.passage
                 for sent_id, sentence in enumerate(passage.sentences):
                     cleaned = collapse_whitespace(sentence)
                     if len(cleaned) < 3:
                         continue
-                    score = 1.0 / (self.rrf_k + rank + 1)
-                    score += 0.05 * jaccard(normalise_text(cleaned), query_terms)
+                    if rank_major:
+                        raw = float(n_docs - rank)
+                        raw += _LEXICAL_TIEBREAK * jaccard(
+                            normalise_text(cleaned), query_terms
+                        )
+                        score = _EVIDENCE_SCORE_CEIL * raw / span
+                    else:
+                        score = 1.0 / (self.rrf_k + rank + 1)
+                        score += 0.05 * jaccard(normalise_text(cleaned), query_terms)
                     entry = pooled.setdefault(
                         (passage.doc_id, sent_id),
                         {
@@ -671,6 +755,17 @@ def _acceptable_kwargs(fn: Callable[..., Any], kwargs: Mapping[str, Any]) -> dic
     if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
         return dict(kwargs)
     return {k: v for k, v in kwargs.items() if k in signature.parameters}
+
+
+#: Weight of the lexical-overlap tiebreaker relative to one document-rank step
+#: in :meth:`Orchestrator.build_evidence`. One rank step is worth 1.0, so rank
+#: outweighs lexical overlap by 1000x. Before, the ratio was 96x the other way.
+_LEXICAL_TIEBREAK = 0.001
+
+#: Upper bound on a passage sentence's evidence score. Held below the score
+#: floor of KG edge evidence (observed 0.26) so that merging the two pools
+#: cannot reorder them downstream. See :meth:`Orchestrator.build_evidence`.
+_EVIDENCE_SCORE_CEIL = 0.1
 
 
 def _numeric_id(identifier: str) -> tuple[int, str]:

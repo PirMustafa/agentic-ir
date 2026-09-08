@@ -30,7 +30,12 @@ Strategy = Literal["single_hop", "bridge", "comparison", "attribute", "bridge_co
 Provenance = Literal["bm25", "dense", "hybrid", "rerank", "kg"]
 Verdict = Literal["accept", "revise", "abstain"]
 Selector = Literal["planner_hint", "heuristic", "llm", "fallback"]
-Origin = Literal["llm", "llm_repaired", "fallback_rule", "template_shortcut"]
+# "reconciled": an LLM answer whose slot was repaired against the model's own
+# answer_sentence after parsing (accuracy plan 1A). Only AnswerCandidate uses
+# it; a Plan is never reconciled.
+Origin = Literal[
+    "llm", "llm_repaired", "fallback_rule", "template_shortcut", "reconciled"
+]
 Source = Literal["hotpotqa", "twowiki"]
 ReplanReason = Literal[
     "low_confidence", "missing_evidence", "contradiction",
