@@ -715,8 +715,13 @@ seed says. Every "unresolved" verdict in this log is downstream of it.
 
 **§7 condition 3 — two consecutive DROPs after the floor was reached.** L2 and
 L3 both dropped; the floor (`self_ask`) was cleared on 2Wiki at Loop 2 and tied
-on HotpotQA. Condition 2 is also effectively met: L0, L1, L2, L3 and L5 are all
-decided, and L4 is the only backlog item never attempted.
+on HotpotQA.
+
+The original text here added that "condition 2 is also effectively met". It was
+not: L4 had never been attempted, and "effectively" was doing work that a stop
+condition does not allow. **Loop 5 decided L4 on an offline gate** (below), so
+condition 2 is now met outright — L0 through L5 are all decided — and the
+sentence no longer needs the hedge.
 
 §1's ladder, honestly scored: 2Wiki **passed its target (≥0.38) and its stretch
 (≥0.42)** at 0.456. HotpotQA at 0.524 **did not reach its 0.55 target** — it
@@ -739,3 +744,155 @@ regenerates the report's tables byte-identically; and the four evaluated
 agentic configurations resolve to **identical** config trees on `main` and
 `v2`, so `agentic_full` is the system the report describes in behaviour and not
 merely in intent.
+
+
+## Loop 5 — rectification, after an independent audit
+2026-09-09 · `v2` `5e4b722` → see below
+
+An audit re-derived every number this log reports, from the traces, without
+reusing the loop's own scripts. **All of them reproduce**: exact match
+0.524 / 0.456 and F1 0.618 / 0.511; the six paired intervals to four decimals;
+the synthesis-failure census 0/0/2/8 with 0/0/26/49 retries; byte-identical
+report tables from `main`; identical resolved configurations for the four
+evaluated agentic systems on `main` and `v2`. What it found was not a wrong
+number. It was a set of things the branch could not tell a reader.
+
+### Provenance of the runs behind 0.524 / 0.456
+
+The four `L1c_*` runs record `git_commit 03b8550`, which is `main`, because
+L1's diff was still uncommitted when they were made. The code they ran is the
+patch now on the branch as `84bcc92`, and that is checkable rather than
+asserted:
+
+```
+diff <(git diff 29fbdba~1 29fbdba -- src/ tests/) \
+     <(git diff 1443038 84bcc92   -- src/ tests/)   # empty: identical patch
+```
+
+### `agentic_v2` could not be run from a checkout of the branch
+
+`--config` takes its choices from `evaluation.configurations`; `config.yaml`
+must not name `agentic_v2` or `tables.py` grows a tenth row; and the variant
+config that declared it lived in a scratch worktree deleted when the loop
+ended. So the branch quoted numbers for a configuration nobody could run.
+`config/config.v2.yaml` is now committed — `config.yaml` plus exactly two
+lines, verified by diff — with a test pinning both halves and a README
+section giving the commands. (`14c3a1e`)
+
+### The trace could not say why a call ended
+
+`LLMCallTrace.truncated` was declared with the schema and assigned by nothing:
+`False` on every call ever recorded, including the ten the loop lost to a
+spent budget. **This is why this log twice states, wrongly, that the empty
+completions were "not the cap"** — the field that would have settled it was in
+the record, reading False, because nobody wrote to it. `llm.py` now reads
+Ollama's `done_reason`; `LLMResponse` and `LLMFormatError` carry it plus
+`hit_length_cap` (any attempt, not just the last, so a call that burns 5,120
+tokens and then parses is still visible); `base.py` writes it into `truncated`
+and adds `completion_tokens`. Seven tests, and no behaviour change: the five
+probe questions produce **byte-identical synthesis prompt hashes** before and
+after (4656 / 4450 / 4257 / 2972 / 2417). (`36c4817`)
+
+### And the instrumentation immediately earned itself
+
+The first run under it reported `completion_tokens` **3072** on a failing
+synthesis call. That is three attempts of **1024**, not of the 5120 the
+configuration is supposed to use. Checking per-agent `think_chars` on the same
+five questions against the run that produced 0.524:
+
+| | synthesiser | verifier |
+|---|---|---|
+| `L1c_think_hotpotqa` (measured) | reasons | **does not reason** |
+| `agentic_v2` via `ABLATION_OVERRIDES` | reasons | **reasons** |
+
+`run_eval` built its client with `get_client()`, which reads the *shipped*
+config, so **every `llm.*` key in `ABLATION_OVERRIDES` was discarded** -- the
+client is where `llm.options` and `llm.think_agents` are read and it had never
+seen them. `llm.think` reaches agents by a second route
+(`agents/base.py::_think`, which does read the run config), so what actually
+ran was reasoning on **every** agent at **1024** tokens. That is precisely the
+starvation setting Loop 2 measured as returning no answer at all, and it is why
+2 of these 5 questions failed where the measured run answered both.
+
+**The configuration on the branch was not the configuration that produced
+0.524**, and it had been that way since `76f8551` moved those settings out of
+the config file and into the override -- a commit written by the coordinator to
+*fix* provenance.
+
+**The audit's 5/5 prompt-hash probe could not have caught this**, and that is
+the lesson worth keeping. None of `think`, `think_agents` or `num_predict`
+takes part in building a prompt, so the hashes matched perfectly while the
+generation behaviour was a different system's. A prompt-identity check
+establishes that the retrieval and evidence path is unchanged; it says nothing
+about how the model is then asked to generate. `completion_tokens` -- a field
+that did not exist that morning -- is what gave it away.
+
+Fixed by `client_for(run_cfg)`, which builds the client from the run's own
+configuration, with tests pinning both directions: `agentic_v2` reasons on the
+synthesiser alone at 5120, and none of the nine evaluated configurations picks
+up either setting. (`36c4817`)
+
+
+Implementing it surfaced a trap worth recording. Read as plain attributes,
+`response.hit_length_cap` raised `AttributeError` on every duck-typed stub in
+the suite — caught by axiom 2, so nothing crashed; the agent simply returned
+`ok=False` and the Planner produced `fallback_rule` plans. **A telemetry field
+silently degraded working agents, and the only symptom was a worse answer.**
+Both reads are `getattr` with a default now, and a test pins that a response
+lacking the fields still answers.
+
+## Loop 5 — L4: self-consistency on the synthesis call — **DROP**
+2026-09-09 · offline gate, no GPU time
+
+The loop had left L4 "not attempted", which is not a decision. The audit
+costed it from the kept runs' own traces: synthesis is 83% of HotpotQA's wall
+time (2.04 h of 2.45 h) and 74% of 2Wiki's (3.19 h of 4.32 h), so ×3 sampling
+projects to **6.53 h** and **10.69 h**. Against §4's 8 h ceiling that made it
+feasible on HotpotQA — the dataset with the open gap — and infeasible on 2Wiki.
+
+So the question was whether 6.5 GPU hours could buy the ~2 points HotpotQA
+needs. The gate: voting suppresses *variance*, so it can only fix a wrong
+answer where a different draw would have been right. Count those first.
+
+Of 119 wrong answers in `L1c_think_hotpotqa`, **19** have the shape L4 targets
+— gold present in the model's own `answer_sentence`, a different span in
+`answer`. That clears the plan's bar of 15, and on the plan's own rule L4
+should have run. **It should not, and the bar was measuring the wrong thing.**
+Fifteen of the nineteen are surface-form artifacts with no variance to
+suppress:
+
+| gold | model's answer |
+|---|---|
+| `ten` | `10` |
+| `five books` | `5` |
+| `650 locations` | `650` |
+| `over 150 films` | `over 150` |
+| `Washington State` | `Washington State Cougars` |
+| `Los Alamos` | `Los Alamos Laboratory` |
+
+Three draws at `temperature: 0.7` would agree with each other and still
+disagree with gold; these are deterministic formatting choices, and
+`accuracy-plan.md` R2.6 already ruled surface-form scoring out of scope as a
+metric property rather than a system defect. **Four** are genuinely different
+spans — and one of those is `19th century` against gold `19th-century`, a
+hyphen, and another is `yes` against an airport name, an answer-type error
+rather than a span choice.
+
+**Ceiling if voting fixed every genuine one: +0.016 EM — 1.6 points.** The
+measured noise floor on this harness is around 3 points. The effect cannot be
+resolved at n=250 *even if it is entirely real*, so the run's interval would
+have to include zero, and §3's own decision rule would then DROP it. Six and a
+half GPU hours to buy an interval whose verdict is already known is not a
+measurement.
+
+**DROP on the offline gate**, the same way L3 was dropped, and for the same
+reason: the hypothesis's premise did not survive contact with the actual
+failure distribution. The backlog L0–L5 is now fully decided and §7's
+condition 2 is met outright.
+
+**A note on the gate itself.** The plan set the bar at a *count of a shape*,
+and 19 of that shape existed. Counting whether the shape was the *mechanism*
+took one more filter and reversed the answer. That is the same error as L3's
+premise — a number that described a different situation than the one it was
+applied to — and it is worth stating that the rectification plan's own gate
+had it too.
