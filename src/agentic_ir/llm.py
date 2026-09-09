@@ -110,6 +110,9 @@ class LLMFormatError(LLMError):
         model: str,
         attempts: int,
         thinking: str | None = None,
+        done_reason: str | None = None,
+        hit_length_cap: bool = False,
+        completion_tokens: int = 0,
     ) -> None:
         super().__init__(message)
         self.raw = raw
@@ -117,6 +120,13 @@ class LLMFormatError(LLMError):
         self.model = model
         self.attempts = attempts
         self.thinking = thinking
+        # The failing calls are the ones worth explaining, so the error path
+        # carries the same three facts the success path does. An empty reply
+        # with ``done_reason == "length"`` and a full thinking channel is a
+        # spent budget; an empty reply without it is a different bug.
+        self.done_reason = done_reason
+        self.hit_length_cap = hit_length_cap
+        self.completion_tokens = completion_tokens
 
 
 # --------------------------------------------------------------------------
@@ -206,6 +216,13 @@ class LLMResponse:
     completion_tokens: int
     latency_s: float
     retries: int
+    #: Ollama's stop reason for the final attempt: ``"stop"`` when the model
+    #: ended its own turn, ``"length"`` when ``num_predict`` ended it for it.
+    done_reason: str | None = None
+    #: True when *any* attempt ended on ``"length"``. Not just the last: a call
+    #: that burns its budget twice and then parses is a latency defect that a
+    #: last-attempt-only flag would hide.
+    hit_length_cap: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -229,6 +246,8 @@ class LLMResponse:
             "total_tokens": self.total_tokens,
             "latency_s": round(self.latency_s, 4),
             "retries": self.retries,
+            "done_reason": self.done_reason,
+            "hit_length_cap": self.hit_length_cap,
         }
 
 
@@ -876,6 +895,8 @@ class OllamaClient:
         used_model = target_model
         parse_error: ValueError | None = None
         attempt = 0
+        done_reason: str | None = None
+        hit_length_cap = False
 
         for attempt in range(max_attempts):
             payload, used_model = self._invoke_with_fallback(
@@ -896,6 +917,9 @@ class OllamaClient:
                     thinking_parts.append(str(chunk).strip())
             prompt_tokens += int(_get(payload, "prompt_eval_count") or 0)
             completion_tokens += int(_get(payload, "eval_count") or 0)
+            done_reason = _get(payload, "done_reason")
+            done_reason = None if done_reason is None else str(done_reason)
+            hit_length_cap = hit_length_cap or done_reason == "length"
             tool_calls = _normalise_tool_calls(message) or tool_calls
 
             if schema is None:
@@ -927,6 +951,8 @@ class OllamaClient:
             completion_tokens=completion_tokens,
             latency_s=latency_s,
             retries=attempt,
+            done_reason=done_reason,
+            hit_length_cap=hit_length_cap,
         )
 
         if parse_error is not None:
@@ -939,6 +965,9 @@ class OllamaClient:
                 model=used_model,
                 attempts=attempt + 1,
                 thinking=thinking,
+                done_reason=done_reason,
+                hit_length_cap=hit_length_cap,
+                completion_tokens=completion_tokens,
             )
 
         self.ledger.record(response)

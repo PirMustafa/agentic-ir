@@ -63,6 +63,7 @@ __all__ = [
     "RunResult",
     "RunSpec",
     "build_system",
+    "client_for",
     "config_for",
     "configurations",
     "gold_doc_ids",
@@ -454,6 +455,32 @@ class NoPlanner:
                 "ablation": "no_planner",
             }
         return plan
+
+
+def client_for(run_cfg: Config) -> Any:
+    """The LLM client a run uses, built from *that run's* configuration.
+
+    This used to be ``get_client()``, which builds from ``load_config()`` -- the
+    shipped file, with no ablation overrides applied. Every ``llm.*`` key in
+    :data:`ABLATION_OVERRIDES` was therefore dropped on the floor, silently,
+    because the client is where ``llm.options`` and ``llm.think_agents`` are
+    read and the client had never seen them.
+
+    It cost ``agentic_v2`` its identity. The configuration is defined as
+    reasoning on the synthesiser at a 5,120-token budget; run through the
+    override path it reasoned on *every* agent (``llm.think`` reaches agents by
+    another route, ``agents/base.py::_think``, which does read the run config)
+    at the shipped 1,024-token budget -- which is the exact starvation setting
+    the loop measured as returning no answer at all. Prompt hashes were
+    unaffected, so a five-question prompt-identity probe matched perfectly while
+    the generation behaviour was not the measured system's at all.
+
+    Building from ``run_cfg`` also gives each run its own ledger, which is what
+    a per-run call count should have been in the first place.
+    """
+    from ..llm import OllamaClient
+
+    return OllamaClient(run_cfg)
 
 
 def config_for(config_name: str, cfg: Config | None = None) -> Config:
@@ -1020,9 +1047,7 @@ def run_eval(
     pending = [g for g in golds if g.qid not in done]
 
     if client is None and is_agentic(spec.config_name):
-        from ..llm import get_client
-
-        client = get_client()
+        client = client_for(run_cfg)
 
     if system is None:
         if pipeline is None:

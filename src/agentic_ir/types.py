@@ -368,7 +368,18 @@ class LLMCallTrace:
     think_chars: int = 0
     retries: int = 0
     cache_hit: bool = False
+    #: The model stopped because it exhausted ``num_predict``, on this attempt
+    #: or any earlier one. Declared from the beginning and assigned by nobody
+    #: until the improvement loop spent two rounds concluding, wrongly and
+    #: twice, that an empty completion was *not* the budget running out -- the
+    #: field that would have said so was here, reading False on every call.
+    #: Now set from Ollama's ``done_reason``. See llm.py::LLMResponse.
     truncated: bool = False
+    #: Tokens generated, summed across attempts (Ollama's ``eval_count``).
+    #: ``completion_chars`` measures the *visible* reply, which is 0 exactly
+    #: when the whole budget went into the thinking channel -- the pair is
+    #: what distinguishes that failure from a model that simply said nothing.
+    completion_tokens: int = 0
     raw_output: str | None = None
     error: str | None = None
 

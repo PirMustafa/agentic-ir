@@ -37,6 +37,7 @@ from agentic_ir.eval.run_eval import (
     build_parser,
     build_system,
     config_for,
+    client_for,
     configurations,
     is_agentic,
 )
@@ -287,6 +288,41 @@ def test_agentic_v2_carries_the_confirmed_thinking_settings(cfg):
     # Thinking without the budget is measurably worse than not thinking: the
     # block runs to the cap and the answer never starts.
     assert derived.get("llm.options.num_predict") == 5120
+
+
+def test_the_client_a_run_uses_is_built_from_that_runs_config(cfg):
+    """The override path has to reach the client, or half of it is decoration.
+
+    ``llm.options`` and ``llm.think_agents`` are read when the client is
+    constructed, and the harness used to construct it with ``get_client()`` --
+    from the shipped file, with no overrides applied. Every ``llm.*`` key in
+    ABLATION_OVERRIDES was dropped in silence.
+
+    What that did to ``agentic_v2`` is the reason this test exists. The
+    configuration is "reasoning on the synthesiser at a 5,120-token budget".
+    Through the broken path it ran as "reasoning on *every* agent at 1,024" --
+    because ``llm.think`` reaches agents by a second route
+    (``agents/base.py::_think``, which does read the run config) while
+    ``think_agents`` and the budget did not. 1,024 with reasoning on is the
+    starvation setting the loop measured as returning no answer at all.
+
+    None of that moved a prompt hash, so it survived a five-question
+    prompt-identity probe untouched. Only the token counts gave it away.
+    """
+    settings = client_for(config_for("agentic_v2", cfg)).settings
+    assert settings.think_for("synthesizer") is True
+    for other in ("planner", "retriever", "kg_navigator", "verifier"):
+        assert settings.think_for(other) is False, other
+    assert settings.options.get("num_predict") == 5120
+
+
+@pytest.mark.parametrize("config_name", ["agentic_full", *AGENTIC_CONFIGS])
+def test_the_evaluated_configurations_get_an_unreasoning_client(cfg, config_name):
+    """The other half: none of the nine may pick up L1's settings by accident."""
+    settings = client_for(config_for(config_name, cfg)).settings
+    assert settings.options.get("num_predict") == 1024
+    for agent in ("planner", "retriever", "kg_navigator", "verifier", "synthesizer"):
+        assert settings.think_for(agent, False) is False, agent
 
 
 def test_the_override_does_not_reach_into_the_shared_config(cfg):

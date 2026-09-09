@@ -384,6 +384,15 @@ class BaseAgent:
                 rec, prompt_id=prompt_id, prompt=prompt, model=exc.model or model,
                 purpose=purpose, parse_ok=False, raw=exc.raw, retries=max(0, exc.attempts - 1),
                 error=str(exc), think_chars=len(exc.thinking or ""),
+                # getattr, not attribute access: this is telemetry, and axiom 2
+                # says no agent raises. A response or error object that predates
+                # these fields -- a stub, a replayed record, a future client --
+                # must cost us the field, never the call. Reading them directly
+                # turned every duck-typed stub in the suite into a silent
+                # fallback_rule, which is exactly the damage the door exists to
+                # prevent.
+                truncated=bool(getattr(exc, "hit_length_cap", False)),
+                completion_tokens=int(getattr(exc, "completion_tokens", 0) or 0),
             )
             return JsonCall(ok=False, raw=exc.raw, reason="parse_failure")
         except Exception as exc:  # noqa: BLE001 - axiom 2: agents never raise
@@ -399,6 +408,8 @@ class BaseAgent:
             parse_ok=parsed is not None, raw=response.text, retries=response.retries,
             think_chars=response.thinking_chars, latency_s=response.latency_s,
             completion_chars=len(response.text or ""),
+            truncated=bool(getattr(response, "hit_length_cap", False)),
+            completion_tokens=int(getattr(response, "completion_tokens", 0) or 0),
         )
         if parsed is None:
             return JsonCall(ok=False, raw=response.text, reason="parse_failure")
@@ -424,6 +435,8 @@ class BaseAgent:
         think_chars: int = 0,
         latency_s: float = 0.0,
         completion_chars: int = 0,
+        truncated: bool = False,
+        completion_tokens: int = 0,
         error: str | None = None,
     ) -> None:
         limit = self._raw_limit()
@@ -442,7 +455,8 @@ class BaseAgent:
                 think_chars=think_chars,
                 retries=retries,
                 cache_hit=False,
-                truncated=False,
+                truncated=truncated,
+                completion_tokens=completion_tokens,
                 raw_output=None if raw is None else raw[:limit],
                 error=error,
             )
