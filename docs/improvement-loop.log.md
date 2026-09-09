@@ -896,3 +896,37 @@ took one more filter and reversed the answer. That is the same error as L3's
 premise — a number that described a different situation than the one it was
 applied to — and it is worth stating that the rectification plan's own gate
 had it too.
+
+
+## Loop 5 — invariants, re-verified after every change
+2026-09-09 · `v2` @ `5134e77`
+
+| invariant | result |
+|---|---|
+| `python -m agentic_ir.cli tables` from `main` | no tracked table modified |
+| the four evaluated agentic configurations, `main` vs `v2` | **0 keys changed value, 0 removed**; 20 keys added (5 distinct), every one at the evaluated default |
+| `--config agentic_v2` under `config/config.yaml` | rejected |
+| `--config agentic_v2` under `config/config.v2.yaml` | accepted |
+| `tests/test_report_integrity.py` | 16 passed — still nine configurations |
+| synthesis `prompt_sha1`, five probe questions, before/after R4 | 5/5 identical |
+| full suite | **444 passed**, 20 skipped |
+
+The keys `v2` adds and `main` does not have are `llm.think_agents` (null),
+`agents.synthesizer.reconcile_answer` and `.answer_type_guard` (both false),
+`agents.verifier.evidence_ranking` (`lexical_major`) and `.evidence_docs` (3).
+Each is L0's or L1's, each is declared at the behaviour the grid ran, and no
+key that existed before changed value. That is the invariant that makes
+`agentic_full` the system the report describes, and it holds.
+
+**Two corrections to how this was checked.** The audit reported the
+configuration trees "IDENTICAL" twice. That result came from a shell in which
+`cd <worktree> && dump` was followed by a second `dump` in the same command —
+the working directory persists between commands, so the second ran in the
+worktree too and the check **compared `v2` with itself**. Whole-tree identity
+was never the right property either, since L0 and L1 legitimately *declare*
+keys that did not exist before; the property that matters is the one in the
+table above. And the first replacement check reported "0 keys added", which was
+also wrong: the dumper rendered each configuration with `default=str`, so the
+comparison walked strings rather than trees and could not see a key at all. A
+green result from a broken check is worth less than a red one, and both of
+these were green.
