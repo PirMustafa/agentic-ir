@@ -1,0 +1,297 @@
+# The improvement loop's configuration. Identical to config.yaml except for
+# two lines, both of which exist so that agentic_v2 can be run at all without
+# touching the report: `agentic_v2` is listed under evaluation.configurations
+# (argparse takes --config's choices from there, and the shipped config must
+# not name it or tables.py would give it a report row), and trace.dir points
+# at results/runs_v2, which discover_runs cannot see. Everything agentic_v2
+# changes is applied by eval/run_eval.py::ABLATION_OVERRIDES, not here.
+#
+#   export AGENTIC_IR_CONFIG=config/config.v2.yaml PYTHONPATH=src
+#   python -m agentic_ir.eval.run_eval --dataset hotpotqa --config agentic_v2 --split eval
+#
+# ============================================================
+# Agentic AI for Information Retrieval
+# Central configuration. Every knob referenced in the report
+# should be traceable to a value in this file.
+# ============================================================
+
+project:
+  name: agentic-ir
+  student_id: D03000104
+  seed: 42
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  indexes: data/indexes
+  results: results
+
+# ------------------------------------------------------------
+# Datasets
+# ------------------------------------------------------------
+datasets:
+  hotpotqa:
+    enabled: true
+    hf_id: hotpotqa/hotpot_qa
+    hf_config: distractor
+    split: validation
+    # Stratified evaluation sample. Full split is 7,405 questions;
+    # a full agentic run over it is ~10h on an 8GB laptop GPU.
+    eval_sample: 250
+    # NOT [level]: measured on the actual split, all 7,405 validation questions
+    # are level=hard (easy/medium exist only in train), so stratifying on it
+    # gives one stratum and a silently unstratified sample. `type` is the
+    # informative split here: bridge 5,918 / comparison 1,487.
+    strata: [type]               # bridge / comparison
+
+  twowiki:
+    enabled: true
+    # 2WikiMultihopQA. Ships gold Wikidata evidence triples, which is
+    # what lets us score the KG Navigator against ground truth.
+    #
+    # NOT xanhho/2WikiMultihopQA: that repo is a script loader, and datasets
+    # >=4.0 removed script support entirely ("Dataset scripts are no longer
+    # supported"), with no trust_remote_code escape hatch. This mirror is
+    # parquet, and its supporting_facts/context shapes match HotpotQA's, so
+    # one loader handles both datasets.
+    hf_id: framolfese/2WikiMultihopQA
+    split: validation
+    eval_sample: 250
+    strata: [type]               # comparison / inference / compositional / bridge_comparison
+
+# ------------------------------------------------------------
+# Local LLM (Ollama). No API keys anywhere in this project.
+# ------------------------------------------------------------
+llm:
+  provider: ollama
+  host: http://localhost:11434
+  # Per-agent models. Planner and Verifier get the reasoning model;
+  # the high-volume Retrieval agent gets the cheaper/faster path.
+  default_model: qwen3:8b
+  fallback_model: qwen2.5:7b-instruct
+  models:
+    planner:   qwen3:8b
+    retriever: qwen3:8b
+    kg:        qwen3:8b
+    verifier:  qwen3:8b
+    synthesizer: qwen3:8b
+  options:
+    temperature: 0.0
+    top_p: 0.9
+    num_ctx: 8192
+    num_predict: 1024
+    seed: 42
+  # qwen3 is a hybrid reasoning model and emits <think>...</think> by default.
+  # At ~30-45 tok/s that is 10-20s of pure waste per call, so it is suppressed
+  # three ways: this flag, a /no_think system suffix, and response stripping.
+  think: false
+  # Which agents reason, overriding `think` for exactly those. null = the
+  # setting is absent and every caller's own argument wins, which is what the
+  # nine evaluated systems ran; [] would mean "no agent reasons", a different
+  # statement. `agentic_v2` sets [synthesizer] via ABLATION_OVERRIDES -- see
+  # eval/run_eval.py -- together with the num_predict the reasoning block
+  # needs. Declared here, rather than left absent, so the default is a value
+  # this file states instead of one a KeyError implies.
+  think_agents:
+  # Retries on malformed structured output before falling back to a
+  # deterministic default. Logged as `parse_failures` in the run trace.
+  max_format_retries: 2
+  request_timeout_s: 180
+  # NOT IMPLEMENTED. There is no sqlite cache anywhere in src/; cache_hit is
+  # False on all 1065 calls of the headline run, and run_eval.py reads this key
+  # only to record cache coldness in meta.json. The flag and the path are kept
+  # so the reported metric keeps its meaning, but nothing reads from or writes
+  # to that file. Every latency figure in the report is therefore a cold
+  # measurement, which is what the report needs -- the caching this once
+  # promised would have made them meaningless.
+  cache:
+    enabled: true
+    path: data/cache/llm_cache.sqlite
+
+# ------------------------------------------------------------
+# Retrieval
+# ------------------------------------------------------------
+retrieval:
+  sparse:
+    method: bm25
+    k1: 0.9
+    b: 0.4
+    stemmer: english
+    # Declared at the values the code already defaults to. They were read with
+    # in-code defaults and appeared in no configuration file, which made the
+    # report's descriptions of indexing uncheckable against anything.
+    method_variant: lucene       # bm25s scoring variant
+    stopwords: english_plus      # english + a multi-hop question-word list
+    index_title: true            # prepend the passage title to its indexed text
+  dense:
+    model: BAAI/bge-small-en-v1.5
+    dim: 384
+    # GPU only for the offline index build; at query time the encoders live on
+    # CPU so Ollama gets the whole card. See docs/environment-validation.md.
+    build_device: cuda
+    query_device: cpu
+    normalize: true
+    batch_size: 256
+    query_prefix: "Represent this sentence for searching relevant passages: "
+    index_type: flat_ip          # exact search; corpus is small enough
+  hybrid:
+    method: rrf
+    rrf_k: 60
+  rerank:
+    enabled: true
+    model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    # Measured over 722 calls of the headline run: 5.0s median, 7.2s p90 for
+    # 50 pairs -- an earlier comment here claimed 0.3-0.6s and was wrong by a
+    # factor of ten. This is the single largest cost per question, about 15s of
+    # a 28s median. It stays on CPU regardless: the card has ~1.5GB free while
+    # Ollama holds the model, and on Windows an over-commit spills to shared
+    # memory and makes generation crawl.
+    device: cpu
+    top_n: 50                    # rerank depth
+    batch_size: 32               # cross-encoder pairs per forward pass
+  top_k: 10                      # final passages returned per sub-query
+
+# ------------------------------------------------------------
+# Agents
+# ------------------------------------------------------------
+agents:
+  planner:
+    max_subqueries: 5
+    max_replans: 2               # Verifier -> Planner feedback loop depth
+    allow_query_rewrite: true
+    # Fire the comparison template before the LLM. Kept OFF for the headline
+    # agentic_full config so the planning claim stays honest; reported
+    # separately as an efficiency ablation.
+    template_shortcut: false
+  retriever:
+    tools: [bm25_search, dense_search, hybrid_search, rerank]
+    # When the tool choice is unambiguous, skip the LLM call and use a
+    # rule. Measured and reported as `llm_calls_saved`.
+    heuristic_shortcut: true
+    multi_query: true
+    max_rewrites: 2              # expansion rides inside the planner call: 0 extra LLM calls
+    # Skip the cross-encoder when the fused top-1 is already decisively ahead;
+    # 50 forward passes that cannot change the answer are not worth running.
+    rerank_margin_gate: 0.15
+    rerank_min_pool: 10          # below this many candidates, reranking is skipped
+  kg:
+    enabled: true
+    max_hops: 2
+    max_neighbors: 25
+    max_seeds: 4                 # entity seeds per sub-query
+    llm_link_on_empty: false     # alias matching finding nothing does NOT buy a model call
+    entity_linker: alias_match   # alias_match | llm
+  synthesizer:
+    # Repair `answer` against the model's own `answer_sentence` after parsing
+    # (accuracy plan 1A): see agents/synthesizer.py::reconcile_answer. false is
+    # what the evaluated grid ran and therefore the default; agentic_v2 sets it
+    # true. Offline over 500 traces (the 250-question agentic_full eval run and
+    # the 250-question agentic_no_planner eval run): 0 correct answers broken.
+    reconcile_answer: false
+    # Forbid a plan node from flipping the final answer type into or out of
+    # yes/no (accuracy plan 1B): see agents/synthesizer.py::infer_answer_type.
+    # The plan calls this an unconditional correctness fix. It cannot be one:
+    # infer_answer_type decides the answer_type rendered into the synthesis
+    # prompt, and replaying both 250-question eval traces shows the guard
+    # changing that type on 12 of agentic_full's 250 questions -- twelve
+    # questions where agentic_full would stop being the run the report
+    # describes. It changes 0 of 250 under agentic_no_planner, whose plans are
+    # a single "string" node, so gating it costs the one-node systems nothing.
+    # false = evaluated behaviour; agentic_v2 sets it true.
+    answer_type_guard: false
+  verifier:
+    enabled: true
+    method: nli_plus_llm         # nli | llm | nli_plus_llm
+    nli_model: cross-encoder/nli-deberta-v3-base
+    nli_device: cpu              # ~0.5-2s; VRAM is fully committed to Ollama
+    confidence_threshold: 0.55   # below this -> trigger a re-plan
+    # What the entailment check takes as its hypothesis.
+    #   sentence       -- entail answer_sentence (what the evaluated grid ran)
+    #   answer_bearing -- as above, but an answer sentence that does not
+    #                     contain the answer earns no support at all
+    # See agents/verifier.py::_hypothesis. Measured AUC of the entailment
+    # score under `sentence` is 0.529 (HotpotQA) and 0.508 (2Wiki), both
+    # intervals containing chance.
+    entail_target: sentence
+    entail_threshold: 0.5        # NLI entailment probability that counts as support
+    contradiction_threshold: 0.7 # above this, a premise is recorded as contradicting
+    evidence_passages: 3         # documents per sub-query ingested WHOLE under
+                                 # evidence_ranking: lexical_major. Also the
+                                 # fallback width for evidence_docs, so a config
+                                 # predating that knob still loads.
+    # How the passage sentences of orchestrator.py::build_evidence are ordered.
+    #   lexical_major  -- 1/(rrf_k + rank + 1) + 0.05*jaccard, over the top
+    #                     `evidence_passages` documents. What the evaluated grid
+    #                     ran, and therefore the default.
+    #   rank_major     -- (n_docs - rank) + 0.001*jaccard, over the top
+    #                     `evidence_docs` documents, normalised into (0, 0.1].
+    #                     Accuracy plan 1C; selected by agentic_v2.
+    # lexical_major is a measured defect: across the three ranks it uses, its
+    # rank term spans 0.00052 and its lexical term spans 0.05 -- 96x -- so
+    # lexical overlap is the primary sort key and the cross-encoder is the
+    # tiebreaker. It stays the default because eighteen evaluated runs were
+    # produced under it; the fix is selectable, not imposed. Same precedent as
+    # entail_target above. Offline over the 250-question eval traces, KG rows
+    # included: 149 complete gold pools -> 152 (4 gained, 1 lost).
+    evidence_ranking: lexical_major
+    # Documents per sub-query whose sentences compete for the max_evidence
+    # slots under evidence_ranking: rank_major. Sentences are scored
+    # individually, so document coverage is decoupled from the sentence budget.
+    # Read only under rank_major; lexical_major uses evidence_passages.
+    #
+    # Held at 3 -- the width whole-document ingestion used -- because widening
+    # it is a measured wash. Complete gold pools over the 250-question eval
+    # traces, docs 3/5/10: 149 -> 134 -> 118 under the old lexical-major key,
+    # 152 -> 149 -> 149 under the rank-major one. Rank-major makes widening
+    # safe but not profitable: a wider passage pool saturates max_evidence,
+    # and KG evidence only fills what passages leave over, so the sentences
+    # gained are paid for by evicted KG rows (on calib, 27/50 questions had KG
+    # evidence at docs=3 and 0/50 at docs=10). Raise this only once the KG has
+    # a reserved quota.
+    evidence_docs: 3
+    require_citations: true
+    max_evidence: 20
+    # Call the LLM adjudicator only inside +/- this band around the threshold.
+    # Confident accepts and confident rejects never spend a call.
+    uncertainty_band: 0.15
+    weights: {nli: 0.45, citation: 0.25, retrieval: 0.15, llm: 0.15}
+
+orchestrator:
+  max_iterations: 6
+  max_llm_calls_per_question: 20
+  max_wall_clock_s: 300
+  # Only the synthesizer and verifier may spend the last N calls, so an answer
+  # is always produced even when the planner exhausts the budget.
+  reserve_llm_calls: 2
+  # argmax(confidence) over ALL cycles, not the last one -- a bad re-plan must
+  # not silently overwrite a better first answer.
+  answer_selection: best_confidence
+  trace: true                    # write full per-question JSONL trace
+
+# ------------------------------------------------------------
+# Evaluation
+# ------------------------------------------------------------
+evaluation:
+  retrieval_metrics: [recall@2, recall@5, recall@10, ndcg@10, mrr]
+  answer_metrics: [em, f1]
+  support_metrics: [sp_em, sp_f1]
+  agent_metrics: [llm_calls, tool_calls, latency_s, plan_depth, replan_rate, citation_grounding]
+  bootstrap_samples: 1000        # for confidence intervals
+  configurations:
+    - bm25_only
+    - dense_only
+    - hybrid_rerank
+    - naive_rag
+    - self_ask
+    - agentic_full
+    - agentic_no_planner
+    - agentic_no_kg
+    - agentic_no_verifier
+    - agentic_v2
+
+# ------------------------------------------------------------
+# Tracing
+# ------------------------------------------------------------
+trace:
+  dir: results/runs_v2
+  raw_output_chars: 2000
