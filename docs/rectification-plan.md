@@ -24,6 +24,12 @@ evidence.
   traces yourself. The loop's log records two wrong conclusions ("not the
   cap", twice) that came from reading a deduplicated field at face value.
 - Never report an action before the tool call that performs it has returned.
+- Commit only from a worktree checked out *on* `v2` (`git worktree add <dir>
+  v2`, never `--detach`), and after every commit run `git log --oneline v2 -1`
+  and confirm it advanced. The audit itself committed `3766c0a` onto a
+  detached HEAD, removed the worktree, and had to recover the commit from the
+  object store by hand — the same class of error the loop's log records at
+  Loop 2. A commit that `git log v2` does not show did not happen.
 - Nulls are results. Write them as nulls.
 
 ## 1. What the audit verified (do not redo; the numbers stand)
