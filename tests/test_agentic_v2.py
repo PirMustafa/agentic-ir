@@ -60,6 +60,12 @@ EVALUATED_DEFAULTS = {
 #: ``AGENTIC_IR_CONFIG`` happens to be pointing at.
 SHIPPED_CONFIG = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
 
+#: The variant config that makes ``agentic_v2`` runnable. It is the other half
+#: of the arrangement :data:`SHIPPED_CONFIG` enforces: the shipped file must
+#: NOT name ``agentic_v2`` (it would gain a report row), so something else has
+#: to, or the configuration is unreachable from the command line.
+V2_CONFIG = Path(__file__).resolve().parents[1] / "config" / "config.v2.yaml"
+
 
 @pytest.fixture(scope="module")
 def cfg():
@@ -91,6 +97,36 @@ def test_the_shipped_config_still_names_exactly_the_nine():
     """
     shipped = configurations(load_config(SHIPPED_CONFIG))
     assert shipped == CONFIGURATIONS
+
+
+def test_the_variant_config_is_what_makes_agentic_v2_runnable():
+    """The mirror of the test above, and it exists because of a real gap.
+
+    ``--config``'s choices come from ``evaluation.configurations``. The shipped
+    config deliberately omits ``agentic_v2``; for a while nothing else declared
+    it either, because the file that did lived in a scratch worktree that was
+    deleted when the loop ended. The branch then carried a configuration whose
+    numbers are quoted in ``docs/improvement-loop.log.md`` and which no one
+    could run. This pins both halves: the variant declares it, and it writes
+    somewhere ``discover_runs`` does not look.
+    """
+    assert V2_CONFIG.exists(), "config/config.v2.yaml is the documented recipe"
+    variant = load_config(V2_CONFIG)
+    listed = configurations(variant)
+    assert "agentic_v2" in listed
+    # ... and it is additive: the nine keep their identity and their order.
+    assert listed[: len(CONFIGURATIONS)] == CONFIGURATIONS
+
+    # Output must land outside results/runs, or tables.py would pick these runs
+    # up as if they were the report's and the grid would silently change.
+    trace_dir = str(variant.get("trace.dir"))
+    assert trace_dir != "results/runs"
+    assert "runs_v2" in trace_dir
+
+    # Everything agentic_v2 changes is applied by ABLATION_OVERRIDES, not by
+    # this file: the fixes must still ship at the evaluated behaviour here.
+    for dotted, evaluated in EVALUATED_DEFAULTS.items():
+        assert variant.get(dotted) == evaluated, dotted
 
 
 # ---------------------------------------------------------------------------

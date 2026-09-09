@@ -252,6 +252,35 @@ is not comparable to a full one and the tables mark it by its `n`.
 Ask the running system for the rest: `python -m agentic_ir.cli eval --help`
 documents `--resume`, `--retry-failed`, `--run-id`, `--limit` and `--size`.
 
+### Running `agentic_v2`, the improvement loop's configuration
+
+`agentic_v2` is the system the improvement loop kept: the one-node plan plus
+reasoning on the synthesis call. It is **not** one of the nine, and it is
+absent from `config/config.yaml` on purpose -- `tables.py` renders a row for
+every name in `evaluation.configurations`, so listing it there would put a
+tenth row in a report it was never run for. It is declared instead in
+`config/config.v2.yaml`, which is that file plus exactly two lines:
+`agentic_v2` in the configuration list, and `trace.dir: results/runs_v2` so
+`discover_runs` cannot see its output.
+
+```bash
+export AGENTIC_IR_CONFIG=config/config.v2.yaml
+python -m agentic_ir.cli eval --dataset hotpotqa --config agentic_v2
+python -m agentic_ir.cli eval --dataset twowiki  --config agentic_v2
+```
+
+Expect exact match 0.524 (HotpotQA) and 0.456 (2Wiki) at n=250, against
+`agentic_full`'s 0.432 and 0.224 -- but expect them *approximately*. Identical
+prompts at `temperature: 0` do not give identical completions on this stack:
+Ollama's KV-cache prefix reuse changes the batch shape between calls, and
+6-14% of answers move between runs of byte-identical code. Seed pinning does
+not fix it. `docs/improvement-loop.log.md` has the measurement and what it
+implies for every comparison in the report.
+
+Without `AGENTIC_IR_CONFIG` pointing at the variant file, `--config
+agentic_v2` is rejected by argparse. That is the intended behaviour, not a
+bug: the shipped configuration is the report's, and it stays that way.
+
 **Run evaluations through `cli eval`, not through `run_eval` directly.** Both
 accept the same flags — `cli eval` passes everything through untouched — but
 only the `cli` path re-executes the interpreter once with `PYTHONHASHSEED=42`
