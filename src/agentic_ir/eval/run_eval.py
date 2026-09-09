@@ -133,8 +133,18 @@ ABLATION_OVERRIDES: dict[str, dict[str, Any]] = {
     # ``evaluation.configurations`` so that ``tables.py`` cannot render it: the
     # one-node plan (from :data:`ONE_NODE_CONFIGS`, not from the override below
     # -- see there) plus reasoning on the synthesis call, which is the one
-    # change the loop confirmed at n=250 on both datasets (HotpotQA exact match
-    # 0.452 -> 0.524, 2Wiki 0.316 -> 0.456; both intervals exclude zero).
+    # change the loop confirmed at n=250 on both datasets.
+    #
+    # Which baseline, because two are in circulation and they differ: against
+    # the loop's own paired baseline -- runs ``L1c_base_*``, the same code on
+    # the same slice with reasoning off -- exact match goes 0.452 -> 0.524 on
+    # HotpotQA and 0.316 -> 0.456 on 2Wiki. Against the report's
+    # ``agentic_no_planner`` runs (0.456 and 0.324) the paired deltas are
+    # +0.068 [+0.024, +0.112] and +0.132 [+0.080, +0.188]. Both baselines are
+    # the same system run twice; the gap between them is the run-to-run churn
+    # ``docs/improvement-loop.log.md`` measures and explains, and it is a
+    # reason to quote a delta with its interval rather than two bare figures.
+    #
     # Everything it sets ships at the evaluated behaviour in ``config.yaml``
     # and is switched on only here, so ``agentic_full`` is unchanged by its
     # existence.
