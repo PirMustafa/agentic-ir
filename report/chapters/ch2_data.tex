@@ -4,317 +4,179 @@
 \section{Requirements for Evaluating an Agentic IR System}
 \label{sec:data-requirements}
 
-A dataset is not chosen because it is popular; it is chosen because it can
-answer the questions a report has to ask. This system's central claim --- that
-a validation agent can send useful feedback to a planning agent --- is only
-meaningful if it can be falsified with numbers. Four requirements follow, and
-they are stated before any dataset is named so that the selection reads as
-derived rather than preferred.
+A dataset is chosen because it can answer the questions a report has to ask.
+This system's central claim, that a validation agent can send useful feedback
+to a planning agent, is meaningful only if it can be falsified with numbers.
+Four requirements follow, stated before any dataset is named.
 
-\textbf{(a) Queries with relevance judgments.} Chapter~\ref{ch:implementation}
-is required to report relevance metrics against baseline IR systems.
-Recall@$k$, nDCG@10 and MRR are all defined over a mapping from queries to
-relevant documents. A corpus without such a mapping --- a \emph{qrels} file, in
-TREC terminology --- makes every one of those metrics undefined, not merely
-inconvenient to compute. This requirement is therefore non-negotiable, and it
-eliminates more candidate resources than the other three combined.
+\textbf{Queries with relevance judgements.} Recall@$k$, nDCG@10 and MRR are
+defined over a mapping from queries to relevant documents. Without one those
+metrics are undefined, and the comparison against baseline IR systems that
+Chapter~\ref{ch:implementation} must present cannot be computed.
 
-\textbf{(b) Genuinely compositional information needs.} The Planner exists to
-decompose a question into a dependency graph of sub-questions. On a corpus of
-single-fact look-ups the correct decomposition is the identity, every plan has
-one node, and the entire agentic apparatus collapses onto the hybrid baseline
-it is supposed to beat. Measuring a planner requires questions whose answers
-are not contained in any single document.
+\textbf{Genuinely compositional needs.} On single-fact look-ups the correct
+decomposition is the identity, every plan has one node, and the agentic
+apparatus collapses onto the hybrid baseline it is supposed to beat. Measuring
+a planner needs questions no single document answers.
 
-\textbf{(c) Entity and structure annotations.} The KG Navigator traverses an
-entity graph, and a traversal that cannot be scored is a description rather
-than a result. Sentence-level supporting-fact annotations make retrieved
-evidence checkable at the granularity the system actually emits; gold
-relational triples make the traversal itself checkable.
+\textbf{Entity and structure annotations.} Sentence-level supporting facts make
+retrieved evidence checkable at the granularity the system emits; gold
+relational triples make a graph traversal itself checkable.
 
-\textbf{(d) A corpus that indexes and runs on consumer hardware.} Every
-component of this system --- generation, embedding, reranking, entailment ---
-runs locally on a single 8\,GB laptop GPU, with no paid API anywhere in the
-project. A web-scale corpus is not merely expensive under that constraint; it
-is unusable, and a resource that cannot be indexed cannot be evaluated.
+\textbf{A corpus that indexes and runs on consumer hardware.} Every component
+runs on a single 8\,GB laptop GPU with no paid API. A web-scale corpus is not
+expensive under that constraint; it is unusable.
 
-BEIR~\cite{thakur2021beir} is the natural first place to look, and it satisfies
-(a) and (d) comfortably across eighteen heterogeneous retrieval tasks. Most of
-its tasks, however, express single-hop needs and carry no reasoning-structure
-annotations, so they satisfy neither (b) nor (c). The two datasets adopted
-below satisfy all four, and the first of them is itself one of BEIR's tasks,
-which keeps this choice inside the standard IR evaluation canon rather than
-outside it.
+BEIR~\cite{thakur2021beir} satisfies the first and fourth requirements across
+eighteen tasks, but most of its tasks express single-hop needs with no
+reasoning-structure annotations. The two datasets adopted below satisfy all
+four, and the first of them is itself one of BEIR's tasks.
 
 \section{On the Datasets Listed in the Assignment Brief}
 \label{sec:table2}
 
-Table~2 of the assignment brief lists five resources: The Pile, Common Crawl,
-WikiText, OpenWebText and LAION-5B. All five are pretraining corpora. They
-supply unlabelled text --- or, for LAION-5B, weakly labelled image--text pairs
---- at a scale suitable for fitting the parameters of a language or multimodal
-model. None of them ships a query set, a relevance judgment, or a gold answer,
-because none of them was assembled for that purpose. Requirement~(a) therefore
-fails outright: with no query-to-document relevance mapping there is no
-Recall@$k$ and no nDCG@10 to report, and the comparison against baseline IR
-systems that Chapter~\ref{ch:implementation} is required to present is not
-computable at all. This is not a deficiency in those corpora. It is a statement
-about what they are for.
-
-They are, in fact, exactly the right resources for a different layer of this
-system. The reasoning component used throughout this project is a locally
-served 8B-parameter language model, and its parametric knowledge --- its grasp
-of English syntax, of world entities, of the shape of a well-formed JSON object
---- is the product of pretraining on corpora of precisely the kind Table~2
-enumerates. The brief's list describes the substrate the agent brings to the
-task; it does not describe the benchmark against which retrieval is scored.
-Those are two different roles, and conflating them is what makes the
-substitution below look like a departure when it is not one. The brief's own
-instruction to ``always check for eventual updates of links and datasets via a
-web search'' is the licence to select evaluation data on evaluation criteria,
-and that is what Sections~\ref{sec:hotpotqa} and~\ref{sec:twowiki} do.
+Table~2 of the brief lists The Pile, Common Crawl, WikiText, OpenWebText and
+LAION-5B. All five are pretraining corpora: unlabelled text, or weakly
+labelled image and text pairs, at a scale suitable for fitting a model. None
+ships a query set, a relevance judgement or a gold answer, so the first
+requirement fails outright. This is not a deficiency in those corpora but a
+statement of what they are for. They are, in fact, the right resources for a
+different layer of this system. The 8B model that does the reasoning here owes
+its grasp of English, of world entities and of the shape of a JSON object to
+pretraining on exactly such corpora. The brief's list describes the substrate
+the agent brings to the task; it does not describe the benchmark retrieval is
+scored against. The brief's own instruction to check for updated datasets is
+the licence to select evaluation data on evaluation criteria.
 
 \section{HotpotQA}
 \label{sec:hotpotqa}
 
-HotpotQA~\cite{yang2018hotpotqa} is a multi-hop question answering dataset
-built over English Wikipedia, in which each question is written so that
-answering it requires combining facts from two distinct paragraphs. This work
-uses the \texttt{distractor} setting, in which every question is accompanied by
-its two gold paragraphs and eight retrieved distractors, and the
-\texttt{validation} split, which contains 7{,}405 questions.
+HotpotQA~\cite{yang2018hotpotqa} is a multi-hop question answering dataset over
+English Wikipedia in which each question requires facts from two distinct
+paragraphs. This work uses the \texttt{distractor} setting, where each
+question carries its two gold paragraphs and eight distractors, and the
+\texttt{validation} split of 7{,}405 questions.
 
-Its distinguishing property, and the reason it is the primary dataset here, is
-the \emph{supporting facts} annotation: alongside the answer string, every
-question carries a list of \texttt{(title, sent\_id)} pairs naming the
-individual sentences a human annotator used. This is retrieval ground truth at
-sentence granularity rather than merely answer ground truth, and it is what
-makes the supporting-fact metrics \texttt{sp\_em} and \texttt{sp\_f1}
-computable at all. It also fixes the granularity of the rest of the system:
-evidence is carried as sentences, not passages, so that what the Verifier
-reasons over and what the metrics score are the same objects.
+Its distinguishing property is the supporting-facts annotation: every question
+carries the \texttt{(title, sent\_id)} pairs a human annotator used. This is
+retrieval ground truth at sentence granularity, and it fixes the granularity of
+the rest of the system. Evidence is carried as sentences, so that what the
+Verifier reasons over and what the metrics score are the same objects.
 
-Reading the distractor contexts of all 7{,}405 validation questions yields
-73{,}700 paragraphs, which reduce to 66{,}581 distinct passages after the
-deduplication described in Section~\ref{sec:preprocessing}; 7{,}119 of the
-discarded paragraphs were byte-identical repeats, and no title in this split
-carries two different body texts. The corpus contains 269{,}602 sentences, a
-mean of 4.049 sentences and 531.9 characters per passage. Of the 18{,}005 gold
-supporting facts, 18{,}004 resolve against the built corpus. The single
-exception is a genuine upstream annotation error rather than a preprocessing
-artefact: question \texttt{5ae61bfd5542992663a4f261} cites sentence 902 of the
-five-sentence paragraph ``Jimmy Butler (basketball)''. At a rate of
-$5.6\times10^{-5}$ this is noise, but it is reported rather than silently
-dropped, because the same counter is the tripwire that would catch a genuine
-sentence-identifier drift.
+Reading the contexts of all 7{,}405 questions yields 73{,}700 paragraphs, which
+reduce to 66{,}581 distinct passages after deduplication; 7{,}119 discarded
+paragraphs were byte-identical repeats and no title carries two body texts. The
+corpus holds 269{,}602 sentences, a mean of 4.049 per passage. Of 18{,}005 gold
+supporting facts, 18{,}004 resolve; the exception cites sentence 902 of a
+five-sentence paragraph, an upstream annotation error reported rather than
+dropped, because the same counter would catch a real identifier drift.
 
-One measured property of this split governs the sampling design in
-Section~\ref{sec:sampling} and is easy to get wrong. HotpotQA labels questions
-\texttt{easy}, \texttt{medium} or \texttt{hard}, but \textbf{all 7{,}405
-validation questions carry \texttt{level=hard}} --- the easier levels exist
-only in the training split. The informative partition here is the reasoning
-type: 5{,}918 \texttt{bridge} questions, in which one entity must be resolved
-before the second hop can even be posed, and 1{,}487 \texttt{comparison}
-questions, in which two independent entities are retrieved and an attribute of
-each is compared.
+One measured property governs the sampling design. HotpotQA labels questions
+easy, medium or hard, but every one of the 7{,}405 validation questions is
+\texttt{hard}; the easier levels exist only in training. The informative
+partition is reasoning type: 5{,}918 bridge questions, where one entity must be
+resolved before the second hop can be posed, and 1{,}487 comparison questions,
+where two entities are retrieved and an attribute compared.
 
 \section{2WikiMultihopQA}
 \label{sec:twowiki}
 
-2WikiMultihopQA~\cite{ho2020constructing} was constructed to expose the
-reasoning steps a multi-hop question requires, rather than only its endpoints.
-Its validation split contains 12{,}576 questions whose 125{,}760 context
-paragraphs reduce to 54{,}957 distinct passages and 202{,}759 sentences, a mean
-of 3.689 sentences and 427.2 characters per passage. Like HotpotQA it ships
-sentence-level supporting facts --- 30{,}687 of them, all of which resolve.
+2WikiMultihopQA~\cite{ho2020constructing} was built to expose the reasoning
+steps a question requires, not only its endpoints. Its validation split holds
+12{,}576 questions whose 125{,}760 context paragraphs reduce to 54{,}957
+distinct passages and 202{,}759 sentences. It ships 30{,}687 sentence-level
+supporting facts, all of which resolve, and, in addition, 31{,}120 gold
+Wikidata evidence triples covering every question. Those triples convert the
+KG Navigator from a component this report describes into one it measures.
 
-The reason it is in this report is what it ships \emph{in addition}: gold
-Wikidata evidence triples, 31{,}120 of them, covering all 12{,}576 questions.
-These give the reasoning chain as structured relations rather than as prose,
-and they convert the KG Navigator from a component this report describes into a
-component this report measures. They also introduce the most severe leakage
-risk in the project. Building the entity graph from those triples would let the
-KG Navigator read the answer key, and every graph-attributed gain in
-Chapter~\ref{ch:implementation} would be an artefact of that leak. The graph is
-therefore built from corpus passage text only
-(Section~\ref{sec:preprocessing}); the gold triples are loaded exclusively by
-the scoring code, and a test asserts that the graph builder never opens a file
+They also introduce the most serious leakage risk in the project. A graph built
+from those triples would let the KG Navigator read the answer key. The graph is
+therefore built from passage text only, the triples are loaded exclusively by
+scoring code, and a test asserts that the graph builder never opens a file
 whose name contains \texttt{evidence} or \texttt{triple}.
 
-Unlike HotpotQA, all four of 2Wiki's reasoning types are populated:
-\texttt{compositional} (5{,}236), \texttt{comparison} (3{,}040),
-\texttt{bridge\_comparison} (2{,}751) and \texttt{inference} (1{,}549). The
-third of these is the hardest case in either dataset, since it requires both a
-bridge resolution and a comparison over its results.
-
-This split is also textually messier than HotpotQA, in a way that bears
-directly on ground truth. Because the same article appears in the contexts of
-many questions, and because those contexts were detokenised inconsistently,
-1{,}720 of the 54{,}957 titles ship two or more variants of the same article
-(``Feo( c.\ 1471'' versus ``Feo (c.\ 1471''), producing 2{,}617 title
-collisions. Since \texttt{sent\_id} indexes into a sentence list, the variant
-retained decides whether a gold fact lands on the right sentence. The
-resolution rule and its measured cost are given in
-Section~\ref{sec:preprocessing}.
+All four reasoning types are populated: compositional (5{,}236), comparison
+(3{,}040), bridge-comparison (2{,}751) and inference (1{,}549). The third is
+the hardest case in either dataset, requiring a bridge resolution and a
+comparison over its results. The split is also textually messier: because the
+same article appears in many contexts with inconsistent detokenisation, 1{,}720
+titles ship two or more variants, producing 2{,}617 title collisions, and since
+\texttt{sent\_id} indexes a sentence list the variant kept decides whether a
+gold fact lands on the right sentence.
 
 \section{Preprocessing Pipeline}
 \label{sec:preprocessing}
 
-The pipeline is deliberately thin. Every transformation it applies is one that
-cannot be undone downstream, and every transformation it declines to apply is
-one a consumer can perform for itself.
+The pipeline is deliberately thin. It applies only transformations that cannot
+be undone downstream and declines every one a consumer can perform for itself.
 
-\paragraph{Passage segmentation.} Both datasets already ship each context
-paragraph as a list of sentences, and that list is adopted verbatim. Nothing in
-this project calls a sentence splitter --- not NLTK, not PySBD, not a regular
-expression. The reason is that supporting facts are \texttt{(title, sent\_id)}
-pairs, so the sentence list \emph{is} the identifier space of the ground truth.
-Re-splitting anywhere downstream would renumber every gold fact while
-\texttt{sp\_em} and \texttt{sp\_f1} continued to produce entirely plausible
-numbers --- a silent failure, which is the worst kind. The split is performed
-once, at corpus build time, and persisted. Empty sentences keep their slot,
-because the slot is the identifier.
+\paragraph{Segmentation and identifiers.} Both datasets ship each paragraph as
+a sentence list, and that list is adopted verbatim. No sentence splitter is
+called anywhere, because the list is the identifier space of the ground truth:
+re-splitting would renumber every gold fact while the metrics went on producing
+plausible numbers. Each passage is keyed by \texttt{source:quote(title)}, so a
+retrieved passage, a graph node and a gold fact name the same object the same
+way.
 
-\paragraph{Canonical identifiers.} Each passage is keyed by
-\texttt{doc\_id} $=$ \texttt{\{source\}:\{quote(title)\}}, for example
-\texttt{hotpotqa:Accolade\%20Wines}. The identifier is URL-safe, stable across
-rebuilds, and derived from the title alone, so that a passage returned by any
-of the three scorers, an entity node in the graph, and a gold supporting fact
-all name the same object in the same way.
+\paragraph{Deduplication.} HotpotQA collapses cleanly. 2Wiki leaves 2{,}617
+cases where one title carries two texts; the rule keeps the variant with the
+most sentences, the widest identifier space, and its cost is measured: keeping
+the first occurrence would leave 70 gold identifiers out of range and 211 on
+the wrong sentence, whereas keeping the widest leaves none out of range and 150,
+or 0.489\%, on a slightly different detokenisation of the intended sentence.
 
-\paragraph{Deduplication.} The distractor setting repeats paragraphs across
-questions, so the raw paragraph stream is roughly an order of magnitude larger
-than the distinct corpus. HotpotQA collapses cleanly: 7{,}119 byte-identical
-repeats removed, zero collisions. 2Wiki removes 68{,}186 identical repeats but
-leaves 2{,}617 cases in which one title carries two different texts. The rule
-is to keep the variant with the \emph{most sentences} --- the widest identifier
-space --- with ties going to the first occurrence. The rule is decided without
-consulting any gold data, and its cost is measured: over 2Wiki's 30{,}687 gold
-facts, keeping the first occurrence would leave 70 identifiers out of range and
-211 pointing at the wrong sentence, whereas keeping the widest leaves 0 out of
-range and 150, or 0.489\%, landing on a slightly different detokenisation of
-the intended sentence. Both residuals are counted in the build statistics
-rather than rounded away.
+\paragraph{What is deliberately not done.} The only text transformation is the
+collapse of whitespace runs. There is no lowercasing, stopword removal,
+stemming or punctuation stripping at the corpus level, because those are
+properties of a scorer's analyser: BM25 stems inside its own analyser, the
+dense encoder needs original case to distinguish proper nouns, and the NLI
+model needs well-formed sentences. One convention is shared by all scorers:
+every one sees the same title-prefixed unit, \texttt{"Title. body"}, because
+fusing a channel that indexes titles with one that does not produces rankings
+that cannot be compared.
 
-\paragraph{Normalisation, and what is deliberately not done.} The only
-transformation applied to corpus text is the collapse of whitespace runs inside
-a sentence, which is necessary because HotpotQA prefixes continuation sentences
-with a space and 2Wiki does not. There is no lowercasing, no stopword removal,
-no stemming and no punctuation stripping at the corpus level. Those are
-properties of a \emph{scorer's analyser}, not of a corpus: BM25 applies
-Snowball stemming and an English stopword list inside its own analyser, whereas
-the dense encoder needs original case and punctuation to distinguish proper
-nouns, and the NLI premise encoder needs well-formed sentences. Baking any of
-those steps into the stored text would be irreversible and would degrade two of
-the three scorers in order to help one. Conversely, one convention \emph{is}
-shared across all of them: every scorer sees the same title-prefixed unit,
-\texttt{"Title. body"}. A channel that indexes titles, fused with a channel
-that does not, produces rankings that are not comparable, and rank fusion would
-absorb the mismatch silently rather than expose it.
-
-\paragraph{Entity extraction and alias resolution.} Graph nodes are passage
-titles, normalised by NFKD decomposition, lowercasing, diacritic stripping,
-removal of parenthetical disambiguators and whitespace collapse. A node's alias
-set is its surface title plus the no-parenthetical variant plus the
-comma-inverted variant, and the aliases are compiled into a trie for
-longest-match linking at query time. No named-entity recogniser and no language
-model is involved, so linking is deterministic and costs nothing at run time.
-
-\paragraph{Entity graph construction.} A directed edge $A \to B$ is created
-when an alias of $B$ occurs in the text of passage $A$. Each edge stores the
-\texttt{doc\_id}, the \texttt{sent\_id} and the containing sentence, which is
-what makes a traversal result citable evidence at the same granularity as a
-retrieved passage rather than an unscoreable decoration. The relation label is
-the shortest verb-anchored token window between the two mentions, truncated to
-six tokens and defaulting to \texttt{mentions}; there is no parser dependency
-and no generation step. Edge weight is $1/(1 + \log(1 + \mathrm{outdeg}(A)))$,
-so hub pages contribute weak edges. As recorded in
-\texttt{data/indexes/\allowbreak\{dataset\}\_kg\_meta.json}, the HotpotQA graph
-retains 64{,}733 nodes and 123{,}759 edges from 417{,}881 candidates and builds
-in 49.4\,s; the 2Wiki graph retains 52{,}959 nodes and 63{,}073 edges from
-161{,}572 candidates and builds in 32.9\,s. Pruning is dominated by a
-document-frequency cap on mentions, which removed 446 and 172 hub nodes
-respectively: strings such as \texttt{one} and \texttt{united states} are
-legitimate page titles, but their occurrences are not relational assertions,
-and without the cap the graph collapses into a hairball centred on them.
-Verb-anchored relation labels are recovered for 76.8\% of HotpotQA edges and
-79.0\% of 2Wiki edges, and Section~\ref{sec:kg-traversal} is explicit about
-what the remainder costs.
-
-\paragraph{Indexing.} Each corpus is indexed twice: a BM25 index with Snowball
-stemming, and an exact inner-product FAISS index over 384-dimensional
-\texttt{bge-small-en-v1.5} embeddings. Together these occupy 129.1\,MB for
-HotpotQA and 103.6\,MB for 2Wiki --- small enough to hold in memory, which is
-why exact search is used in place of an approximate index and why no recall
-loss is introduced at the index level. The 2Wiki build took 4.1\,s for BM25 and
-97.6\,s for the dense index on GPU.
+\paragraph{Entity graph and indexes.} Nodes are normalised passage titles
+whose aliases are compiled into a trie for longest-match linking. A directed
+edge $A \to B$ is created when an alias of $B$ occurs in the text of $A$, and
+the edge stores the sentence asserting it, which is what makes a traversal
+result citable at the same granularity as a retrieved passage. The HotpotQA
+graph retains 64{,}733 nodes and 123{,}759 edges; the 2Wiki graph 52{,}959
+nodes and 63{,}073 edges. A document-frequency cap removed 446 and 172 hub
+nodes, titles such as \texttt{one} whose occurrences are not relational
+assertions. Each corpus is also indexed twice, by BM25 with Snowball stemming
+and by an exact FAISS index over \texttt{bge-small-en-v1.5} embeddings; the
+two occupy 129.1\,MB and 103.6\,MB, small enough to hold in memory, which is
+why exact search is used and no recall is lost at the index level.
 
 \section{Evaluation Sampling}
 \label{sec:sampling}
 
-Evaluation is run on a frozen 250-question sample per dataset rather than on
-the full split, and the reason is arithmetic. Local generation runs at a
-measured 52 tokens per second warm on an RTX 5060 with 8\,GB of VRAM, giving a
-derived rather than measured planner call of about 3.75\,s. The pre-run
-estimate on which the sampling decision was taken put a full agentic question
-at roughly 22--25\,s once retrieval, reranking and entailment were included;
-the medians actually measured, reported in
-Table~\ref{tab:agent-metrics-hotpotqa} and Table~\ref{tab:agent-metrics-twowiki},
-came out higher, and the estimate is recorded here as the estimate it was
-rather than revised to match. On that estimate one agentic configuration over
-HotpotQA's full 7{,}405-question validation split is on the order of 45 hours,
-and the evaluation grid comprises nine configurations across two datasets. At
-250 questions the same grid was estimated at 12--16 hours, which is feasible
-on this hardware; at 7{,}405 it is not.
+Evaluation runs on a frozen 250-question sample per dataset, and the reason is
+arithmetic. At 52 tokens per second a full agentic question was estimated
+before the runs at 22 to 25 seconds; the medians actually measured came out
+higher, and the estimate is recorded as the estimate it was. On it, one agentic
+configuration over the full 7{,}405-question split is about 45 hours, and the
+grid is nine configurations over two datasets. At 250 questions the grid was
+feasible on this hardware; at 7{,}405 it was not.
 
-The sample is drawn once, by \texttt{scripts/sample\_eval\_set.py} with
-seed~42, materialised to
-\texttt{data/processed/\allowbreak\{dataset\}\_eval\_250.jsonl}, and never
-re-sampled at
-run time. Its SHA-256 is recorded in every run's \texttt{meta.json}, so a
-silently changed sample is detectable after the fact.
-
-The stratification variable is question type, not difficulty, and that is a
-measured decision rather than a stylistic one. As reported in
-Section~\ref{sec:hotpotqa}, all 7{,}405 HotpotQA validation questions are
-labelled \texttt{hard}. Stratifying on \texttt{level} would therefore produce a
-single stratum --- an unstratified sample presented as a stratified one, with
-the label doing no work while implying that it does. Stratifying on
-\texttt{type} preserves the $0.799/0.201$ bridge--comparison ratio exactly, at
-200 and 50 questions. For 2Wiki the four reasoning types are preserved at 104
-compositional, 60 comparison, 55 bridge-comparison and 31 inference.
-Table~\ref{tab:dataset-sample} gives the full composition against the split.
+The sample is drawn once with seed 42, materialised to disk, and never
+re-sampled; its SHA-256 is recorded in every run's metadata so a silently
+changed sample is detectable afterwards. Stratification is on question type,
+not difficulty, and that is a measured decision: with every HotpotQA
+validation question labelled hard, stratifying on level would give a single
+stratum, an unstratified sample presented as a stratified one. Stratifying on
+type preserves the bridge and comparison ratio exactly at 200 and 50
+questions, and 2Wiki's four types at 104, 60, 55 and 31.
+Table~\ref{tab:dataset-sample} gives the composition.
 
 Two hundred and fifty questions is enough to separate the systems compared
-here. In the worst case --- a metric near 0.5, treated as an unpaired binomial
-proportion --- the 95\% normal-approximation half-width is
-$1.96\sqrt{0.25/250} \approx 0.062$, an interval of roughly $\pm6.2$ points.
-The comparisons that matter in Chapter~\ref{ch:implementation} are paired,
-however: every configuration answers the identical 250 questions, so the
-bootstrap is taken over per-question \emph{differences} (1{,}000 resamples,
-\texttt{evaluation.bootstrap\_samples}), and the error correlation between
-systems sharing a corpus, an index and a question set makes those intervals
-materially tighter than the unpaired figure suggests; the realised widths are
-reported with the results rather than assumed here. The three component
-ablations run on the same 250 questions as every other configuration, not on
-a subsample, so that every ablation delta is a paired comparison over an
-identical question set; where an ablation run had not yet covered all 250
-questions the generated table marks the row as preliminary and withholds its
-delta rather than pairing a prefix against the full slice.
-
-Each dataset also gets a 50-question calibration slice,
-\texttt{\{dataset\}\_calib\_50.jsonl}, written beside the evaluation file in
-\texttt{data/processed/} and verified to have zero question-identifier overlap
-with the evaluation 250. Its intended purpose was to fix
-the Verifier's \texttt{confidence\_threshold} --- 0.55 --- before the
-evaluation run began. That threshold controls the re-plan rate, which is
-itself one of the headline agent-specific measures, so sweeping it on the
-evaluation set would be tuning on the test set and would invalidate the very
-metric it was tuned to improve. In the event the sweep was run over this slice
-only after the evaluation, on confidences produced at the configured value,
-and Chapter~\ref{ch:conclusions} reports what such a post-hoc sweep can and
-cannot establish; the slice's disjointness is what keeps even that diagnostic
-reading free of the evaluation questions. Table~\ref{tab:dataset-corpus}
-summarises the two corpora as built.
+here. Treated as an unpaired proportion near 0.5, the 95\% half-width is about
+6.2 points. The comparisons that matter are paired: every configuration
+answers the identical 250 questions, so the bootstrap is taken over
+per-question differences, and the correlation between systems sharing a
+corpus, an index and a question set makes those intervals materially tighter.
+Each dataset also gets a disjoint 50-question calibration slice, verified to
+share no question identifier with the 250, reserved for setting the Verifier's
+threshold. Table~\ref{tab:dataset-corpus} summarises the two corpora as built.
 
 \input{../results/tables/dataset_stats.tex}

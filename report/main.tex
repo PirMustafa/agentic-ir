@@ -14,9 +14,9 @@
 % package's single-line check boxes the whole caption on one line to measure
 % it, and for those captions the box exceeds TeX's maximum dimension. The
 % check is pointless for captions that long, so it is disabled for tables.
-\captionsetup[table]{singlelinecheck=false}
+\captionsetup[table]{singlelinecheck=false,font=footnotesize}
 \usepackage[hidelinks]{hyperref}
-\usepackage[margin=2.5cm]{geometry}
+\usepackage[margin=2.0cm]{geometry}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric}
 
@@ -30,11 +30,14 @@
 \author{%
   Student ID: D03000104\\[0.6em]
   \small Universit\`a degli Studi di Napoli Federico II\\
-  \small Information Retrieval --- A.Y. 2024/2025\\
-  \small Prof. Antonio Maria Rinaldi --- Dr. Domenico Benfenati\\
+  \small Information Retrieval, A.Y. 2024/2025\\
+  \small Prof. Antonio Maria Rinaldi and Dr. Domenico Benfenati\\
   \small IKNOS-DIETI Lab
 }
 \date{\today}
+
+% Chapters and sections only: subsections in the contents cost a page.
+\setcounter{tocdepth}{1}
 
 \begin{document}
 
@@ -42,62 +45,38 @@
 \tableofcontents
 
 \begin{abstract}
-Most retrieval-augmented systems are pipelines: they retrieve once and generate
-once. That structure cannot answer a question whose evidence is distributed
-across documents, because no single document is rankable as the answer. This
-report presents an agentic alternative --- four agents coordinated by an
-explicit state machine, covering all five tasks of the assignment brief. A
-Planner decomposes a question into a validated graph of dependent sub-queries; a
-Retrieval Agent routes each sub-query to BM25, dense, or hybrid search via a
-seven-rule decision table costing zero model calls; a Knowledge Graph Navigator
-traverses an entity graph induced from corpus text to recover bridge entities;
-and a Verifier scores the answer against its own citations using entailment and
-citation grounding. The central contribution is one backward edge: below its
-confidence threshold the Verifier returns a re-plan directive to the Planner
-rather than an answer. That edge is the difference between a pipeline and an
-agent, and it is isolated by ablation rather than asserted. The system is
-evaluated on HotpotQA and 2WikiMultihopQA against lexical, dense, hybrid, and
-agentic baselines, reporting agent-specific cost alongside answer quality.
-Everything runs locally on one consumer GPU with no paid API.
-The result is not the one the architecture was hoping for and is reported as
-measured. On answer accuracy the agentic system does not lead: exact match is
-0.432 on HotpotQA and 0.224 on 2WikiMultihopQA against 0.504 and 0.264 for a
-self-ask baseline that decomposes but never verifies, a deficit that is
-significant on HotpotQA under the paired bootstrap and not on 2WikiMultihopQA.
-The backward edge does measurable work on one of the two datasets and none on
-the other: removing it, with everything else held fixed, changes HotpotQA F1
-by $-0.037$ $[-0.065, -0.011]$, a significant loss, and 2WikiMultihopQA F1 by
-$-0.001$ $[-0.025, +0.025]$, $p = 1.000$ --- though it fired on 98 of those
-250 questions and charged the same doubled cost. The contribution is therefore
-reported as conditional rather than general. The ablation grid's largest effect
-belongs to the component the brief lists first, and its sign is negative:
-removing the Planner improves F1 by $+0.033$ $[-0.017, +0.086]$ on HotpotQA and
-by $+0.121$ $[+0.067, +0.173]$, $p < 0.001$, on 2WikiMultihopQA, at a third of
-the model calls and an eighth of the median latency. That configuration is also
-the only one in the study to beat the strongest answering baseline
-significantly, $\Delta$F1 $= +0.078$ $[+0.021, +0.135]$, while grounding 0.900
-of its citations against that baseline's zero. Since it plans a single identity
-node it issues one query, as \texttt{naive\_rag} does, and outscores it by
-0.324 exact match to 0.152 --- so what the agentic stack contributes here is its
-evidence handling and verification, and query decomposition subtracts from it.
-On attribution the agentic system is not more accurate but
-differently accountable. Its supporting-fact F1 of 0.481 and 0.421 sits above
-the strongest retrieval baseline's 0.412 and 0.327, though the two are scored
-under different protocols and the tables place no significance mark between
-them; it is scored
-on the sentences it actually cited, at a citation grounding of 0.960 and 0.976
-where every baseline resolves no citation at all; the generative baselines,
-scored on their whole evidence pool, reach a supporting-fact F1 that is not
-comparable with it and is marked as such, while on the like-for-like recall
-of the whole pool the agentic system leads every baseline, 0.793 and 0.684
-against 0.706 and 0.622, significantly on both. The gated verifier
-adjudication and the deterministic extraction ladder displaced 2.60 and 3.10
-model calls per question that the system would
-otherwise have made --- though in the headline run the Planner's own tool hint
-pre-empted the routing table on every sub-query, so six of its seven rules
-never executed --- and the re-plan loop fired on 47.2\% and 39.2\% of
-questions. The defensible claim is about grounded, auditable answers rather
-than raw accuracy, and the cost of that guarantee is reported beside it.
+Most retrieval-augmented systems retrieve once and generate once, and that
+structure cannot answer a question whose evidence is spread across documents,
+because no single document is rankable as the answer. This report presents an
+agentic alternative: four agents coordinated by an explicit state machine,
+covering all five tasks of the assignment brief. A Planner decomposes a
+question into a validated graph of dependent sub-queries, a Retrieval Agent
+routes each to BM25, dense or hybrid search, a Knowledge Graph Navigator
+recovers bridge entities from a graph induced from corpus text, and a Verifier
+scores the answer against its own citations. The central contribution is one
+backward edge: below its confidence threshold the Verifier returns a re-plan
+directive to the Planner instead of an answer. Everything runs locally on one
+consumer GPU with no paid API, and the edge is isolated by ablation rather
+than asserted.
+
+The result is reported as measured. On answer accuracy the agentic system does
+not lead: exact match is 0.432 on HotpotQA and 0.224 on 2WikiMultihopQA against
+0.504 and 0.264 for a self-ask baseline that decomposes but never verifies.
+The backward edge does measurable work on one dataset and none on the other.
+The largest effect in the ablation grid belongs to the component the brief
+lists first, and its sign is negative: deleting the Planner improves F1 by
+0.121 on 2WikiMultihopQA at a third of the model calls. What the agentic stack
+earns its cost for is grounded, auditable answers, with 0.960 and 0.976 of
+citations resolving to real sentences where no baseline's resolve at all.
+
+A bounded improvement loop then tested five hypotheses against the one-node
+configuration. One survived: letting the synthesiser reason, with a completion
+budget large enough to hold it, takes exact match to 0.524 and 0.456, ties the
+strongest baseline on HotpotQA and beats it by 0.192 on 2WikiMultihopQA. The
+loop also established that seed pinning does not make this system
+reproducible, because a caching inference server changes the arithmetic
+between identical requests, and that finding bounds every comparison in this
+report.
 \end{abstract}
 
 \input{chapters/ch1_introduction}
@@ -107,6 +86,8 @@ than raw accuracy, and the cost of that guarantee is reported beside it.
 \input{chapters/ch5_conclusions}
 
 \bibliographystyle{plain}
+{\small
 \bibliography{references}
+}
 
 \end{document}

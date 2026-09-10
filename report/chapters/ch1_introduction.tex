@@ -3,307 +3,199 @@
 
 \section{From Reactive Generation to Agency}
 
-A generative language model is a function from a prompt to a completion. Given
-an input it emits text and stops. It holds no goal that outlives the call, it
-cannot observe what its output caused, and it has no mechanism for concluding
-that what it produced was inadequate. That is an accurate description of a
-component, and it is also an accurate description of most systems currently
-labelled retrieval-augmented: a query is embedded, a ranked list is fetched, the
-list is concatenated into a prompt, and a completion is emitted. Retrieve once,
-generate once. The behaviour is reactive because nothing in the architecture
-allows it to be anything else.
+A generative language model is a function from a prompt to a completion. It
+emits text and stops. It holds no goal that outlives the call, it cannot observe
+what its output caused, and it has no way of concluding that what it produced
+was not good enough. That describes a component, and it also describes most
+systems currently called retrieval-augmented: embed a query, fetch a ranked
+list, paste the list into a prompt, emit a completion. Retrieve once, generate
+once. Nothing in that structure allows the behaviour to be anything but
+reactive.
 
 Agentic artificial intelligence names the class of systems built to remove that
-limitation. An agentic system pursues a goal across multiple steps, selects its
-own actions, invokes external instruments to carry them out, observes what those
-instruments returned, and revises its behaviour in light of the
-observation~\cite{zhang2024aiagent,wu2025agentic}. Four properties are
-load-bearing, and it is worth separating them because systems are routinely
-called agentic on the strength of the first three alone.
+limitation. An agentic system pursues a goal across several steps, chooses its
+own actions, calls external instruments to carry them out, observes what came
+back, and revises its behaviour in light of the
+observation~\cite{zhang2024aiagent,wu2025agentic}. Four properties carry the
+weight. \textbf{Autonomy}: the system, not the user, decides what happens next.
+\textbf{Goal-directed planning}: the work is represented explicitly before it
+is done, so the plan can be inspected, validated, repaired and discarded.
+\textbf{Tool integration}: the model is not the source of facts but the
+selector of instruments. \textbf{Adaptive reasoning}: the plan can be revised
+after execution has begun, because an observation can invalidate it.
 
-\textbf{Autonomy} means that the system, not the user, decides what happens
-next. The user supplies a goal; every intermediate decision --- which
-sub-question to ask, which index to consult, whether the current answer is good
-enough to return --- belongs to the system. \textbf{Goal-directed planning}
-means the system constructs an explicit representation of the work before doing
-it. A plan is an artefact rather than an emergent side effect: it can be
-inspected, validated, repaired, compared against a previous plan, and discarded.
-\textbf{Tool integration} means the model is not the answer source but the
-instrument selector. Facts come from retrieval indexes, graph traversals, and
-arithmetic; the model's contribution is deciding which instrument fits which
-sub-goal and how the outputs compose. \textbf{Adaptive reasoning} means the plan
-is revisable after execution has begun, because an observation can invalidate
-it.
-
-The fourth property is the difficult one, and it is the one most often absent.
-Autonomy, planning, and tool use can all be present in a system that is
-nevertheless a fixed pipeline whose stages happen to be language-model calls:
-work flows forward, each stage runs exactly once, and nothing discovered late
-can change anything decided early. The industry touchstones the assignment brief
-cites --- AutoGPT and Microsoft's Jarvis --- are notable precisely for
-attempting the fourth property, letting a model re-enter its own planning stage
-on the basis of what its tools returned. The research literature shows the same
-trajectory. PaperQA retrieves across full-text scientific articles, judges the
-relevance of what it found, and synthesises an answer from the surviving
-evidence~\cite{lala2023paperqa}. The Agentic Reasoning framework adds tool-using
-sub-agents and a mind-map agent that maintains a structured record of
-established relations~\cite{wu2025agentic}. CollEX supports curiosity-driven
-multimodal exploration of scientific collections~\cite{schneider2025collex},
-agentic contextual retrieval in telecommunications combines multi-source
-retrieval with self-reflective validation for network
-decision-making~\cite{zhang2025toward}, and multi-agent geospatial copilots
-decompose remote-sensing workflows across specialised
-agents~\cite{lee2025multiagent}. Chapter~\ref{ch:methodology} examines these
-approaches in detail. What matters here is the shape they share and the question
-they leave open: whether the feedback edge, once actually implemented, earns the
-compute it consumes.
+The fourth property is the difficult one and the one most often missing. A
+system can be autonomous, planned and tool-using and still be a fixed pipeline
+whose stages happen to be model calls. The industry touchstones the assignment
+brief names, AutoGPT and Microsoft's Jarvis, are notable for attempting the
+fourth property. The research literature shows the same direction. PaperQA
+retrieves across scientific articles, judges what it found and synthesises from
+the survivors~\cite{lala2023paperqa}. Agentic Reasoning adds tool-using
+sub-agents and a mind-map agent~\cite{wu2025agentic}. CollEX explores
+multimodal scientific collections~\cite{schneider2025collex}, agentic
+contextual retrieval in telecommunications combines multi-source retrieval
+with self-reflective validation~\cite{zhang2025toward}, and multi-agent
+geospatial copilots decompose remote-sensing workflows across specialised
+agents~\cite{lee2025multiagent}. What they share is the shape, and what they
+leave open is the question this report exists to test: whether the feedback
+edge, once actually implemented, earns the compute it consumes.
 
 \section{The Limits of Static Ranking}
 
 Classical information retrieval is the study of a scoring function. Given a
-query and a corpus, rank the documents by estimated relevance and return the
-top $k$. The probabilistic relevance framework and its BM25 instantiation
-formalise this for lexical matching~\cite{robertson2009probabilistic}; dense
-bi-encoders replace term overlap with proximity in a learned embedding
-space~\cite{xiao2023cpack}; reciprocal rank fusion combines rankings from
-several such systems without requiring their scores to be
-commensurable~\cite{cormack2009reciprocal}; and heterogeneous benchmarks such as
-BEIR measure how well any of it transfers to unseen
-domains~\cite{thakur2021beir}. These are genuine and cumulative advances. Every
-one of them improves the \emph{ordering of a single list produced from a single
-query}.
+query and a corpus, rank the documents and return the top $k$. BM25 formalises
+this for lexical matching~\cite{robertson2009probabilistic}, dense bi-encoders
+replace term overlap with proximity in a learned space~\cite{xiao2023cpack},
+reciprocal rank fusion combines rankings whose scores share no
+scale~\cite{cormack2009reciprocal}, and BEIR measures how well any of it
+transfers~\cite{thakur2021beir}. These are real and cumulative advances, and
+every one of them improves the ordering of a single list produced from a
+single query.
 
-Consider a question from the HotpotQA development set~\cite{yang2018hotpotqa},
-which this report reuses as a running example:
+Consider a HotpotQA question~\cite{yang2018hotpotqa} that this report reuses
+throughout:
 
 \begin{quote}
 \textit{When did the tour begin for the album Taylor Swift released on
 October 22, 2012?}
 \end{quote}
 
-\noindent The corpus contains the two passages that settle it. The passage
-titled \texttt{Red (Taylor Swift album)} states that \textit{Red} is the fourth
-studio album by Taylor Swift and was released on October 22, 2012. The passage
-titled \texttt{The Red Tour} states that the tour was launched in support of
-that album and began on March 13, 2013 in Omaha, Nebraska. The gold answer is
-\textit{March 13, 2013}.
-
-Of the 66{,}581 passages in the processed HotpotQA corpus, exactly zero contain
-both \textit{October 22, 2012} and \textit{March 13, 2013}. This is not a
-statement about ranking quality. It is a statement about the corpus: there is no
+\noindent The passage \texttt{Red (Taylor Swift album)} says the album was
+released on that date. The passage \texttt{The Red Tour} says the tour began on
+March 13, 2013. Of the 66{,}581 passages in the processed HotpotQA corpus, none
+contains both dates. That is not a statement about ranking quality. There is no
 document for a ranker to place first, because no single document answers the
-question. A single-shot retriever is structurally incapable here, and so is
-every refinement layered on top of it. A cross-encoder reranker permutes a
-candidate set; it cannot insert into that set a passage whose relevance depends
-on a fact the query does not contain.
-
-The lexical structure of the example sharpens the point. The bridge entity ---
-the album title \textit{Red}, the one term connecting the question to the
-answer-bearing page --- does not occur in the question at all. It has to be
-\emph{derived} before it can be searched for. A lexical retriever cannot match a
-term that was never typed, and a dense retriever embeds the question as a whole,
-so the sub-need ``identify the album'' is diluted by the sub-need ``find its
-tour date'' rather than issued as a query in its own right. The information need
-is a composition of two atomic needs, and single-shot retrieval resolves
-compositions only in the fortunate case where some passage already states the
-composition. This is the compositionality gap that Press et al.\ measure
+question. The bridge entity, the album title \textit{Red}, does not occur in
+the question at all; it has to be derived before it can be searched for. A
+lexical retriever cannot match a term that was never typed, and a dense
+retriever embeds the whole question, so the sub-need ``identify the album'' is
+diluted by the sub-need ``find its tour date'' rather than issued on its own.
+This is the compositionality gap that Press et al.\ measure
 directly~\cite{press2023selfask}, and it is what motivates interleaving
-retrieval with reasoning steps rather than separating
-them~\cite{trivedi2023interleaving}.
+retrieval with reasoning rather than separating them~\cite{trivedi2023interleaving}.
 
-Scale turns the difficulty into an impossibility. The two corpora used in this
-work hold 66{,}581 and 54{,}957 passages; the number of ordered passage
-\emph{pairs} is on the order of $10^9$ in each case. Materialising the
-compositions in advance is not an option, so the composition must be inferred
-from the question, which is a reasoning operation rather than a ranking one. Two
-further pressures compound it. The HotpotQA distractor setting populates each
-question's candidate pool with passages deliberately chosen to be topically
-adjacent to the gold ones, so surface similarity is actively adversarial. And
-relevance for the first hop is defined only relative to an intermediate goal the
-user never stated: \texttt{Red (Taylor Swift album)} is relevant not because it
-resembles the question but because it supplies the term the second query needs.
-No relevance judgement over the original query alone can express that.
+Scale turns the difficulty into an impossibility. The two corpora hold
+66{,}581 and 54{,}957 passages, so the number of ordered passage pairs is on
+the order of $10^9$. The composition cannot be materialised in advance; it has
+to be inferred from the question, which is a reasoning operation rather than a
+ranking one. Two pressures compound it: the distractor setting fills each
+candidate pool with passages chosen to look like the gold ones, and relevance
+for the first hop is defined only relative to an intermediate goal the user
+never stated.
 
 \section{Problem Statement}
 
-The problem this project addresses is the design of an information retrieval
-agent that, given a natural-language question and a static corpus, does four
-things a ranker does not. It must \emph{interpret the intent} behind a question
-whose surface form under-specifies the retrieval work required. It must
-\emph{decompose} that intent into an ordered set of sub-goals with explicit
-dependencies, so that the result of one retrieval can be substituted into the
-query of the next. It must \emph{orchestrate} the resulting multi-step workflow,
-choosing an appropriate retrieval instrument for each sub-goal and, where the
-corpus admits a structured view, traversing that structure rather than searching
-it. And it must \emph{judge its own answer} against the evidence it actually
-retrieved, before returning anything.
+The problem is the design of a retrieval agent that, given a question and a
+static corpus, does four things a ranker does not. It interprets an intent
+whose surface form under-specifies the work. It decomposes that intent into
+ordered sub-goals with explicit dependencies, so that one retrieval's result
+can be substituted into the next query. It orchestrates the resulting workflow,
+choosing an instrument for each sub-goal and traversing structure where the
+corpus admits one. And it judges its own answer against the evidence it
+actually retrieved before returning anything.
 
-The fourth requirement is where a pipeline and an agent part company, and it is
-the central claim this report exists to test. The system described here is, with
-one exception, a forward pipeline: plan, execute, aggregate, synthesise. The
-exception is a single backward edge. A Verifier scores each candidate answer
-against the evidence cited in support of it, blending natural-language-inference
-entailment, citation grounding, and the agreement between retrieved passages and
-the answer into one confidence value. When that confidence falls below the
-configured threshold, the Verifier does not answer. It emits a
+The fourth requirement is where a pipeline and an agent part company. The
+system described here is, with one exception, a forward pipeline: plan,
+execute, aggregate, synthesise. The exception is a single backward edge. A
+Verifier scores each candidate answer against the evidence cited for it, and
+when its confidence falls below a threshold it does not answer. It sends a
 \texttt{ReplanDirective} back to the Planner carrying what could not be
-established, which sub-queries returned nothing useful, and --- the field that
-makes the loop converge rather than spin --- the normalised text of every
-sub-query already attempted, which the next plan is forbidden to repeat. One
-edge is a modest architectural change and a categorical behavioural one: it is
-the only mechanism in the system by which a late observation can revise an early
-decision.
+established, which sub-queries returned nothing useful, and the text of every
+sub-query already tried, which the next plan may not repeat. One edge is a
+modest architectural change and a categorical behavioural one.
 
-The system operates under a deliberate constraint. It runs entirely on local
-hardware: inference is served by \texttt{qwen3:8b} at Q4\_K\_M quantisation
-through Ollama on a single RTX 5060 with 8~GB of VRAM, measured at 52 tokens per
-second warm, and no component holds an API key. The constraint sharpens the
-research question rather than weakening it. At that throughput a
-schema-constrained model call costs several seconds of wall clock, so every call
-must be justified against a deterministic alternative. The resulting design
-treats ``where should an agent reason?'' as a budgeting problem: tool selection
-is decided by a seven-rule decision table over cheap lexical features and costs
-zero model calls, entity linking is alias matching, graph traversal is
-bidirectional breadth-first search, and the confidence blend is arithmetic. The
-worst case for a full agentic question is 15 model calls against a hard cap of
-20, and the measured mean is 4.26 and 3.80. A system that cannot afford to think
-everywhere is forced to be explicit about where thinking pays --- and, as
-Chapter~\ref{ch:implementation} reports, the division of labour it settles on
-is not always the one that was designed: in the headline run the Planner
-attached a tool hint to every sub-query, so the first rule of the routing table
-decided every routing and the other six were never reached.
+The system runs entirely on local hardware: \texttt{qwen3:8b} at Q4\_K\_M
+quantisation through Ollama on a single RTX 5060 with 8~GB of VRAM, measured at
+52 tokens per second warm, with no API key anywhere. At that throughput a
+schema-constrained model call costs several seconds, so every call has to be
+justified against a deterministic alternative. Tool selection is a decision
+table over lexical features, entity linking is alias matching, graph traversal
+is breadth-first search, and the confidence blend is arithmetic. A system that
+cannot afford to think everywhere is forced to say where thinking pays, and, as
+Chapter~\ref{ch:implementation} reports, the answer it arrived at was not the
+one it was designed around.
 
 \section{Objectives and Contributions}
 
-The objective is a working agentic retrieval system that covers all five tasks
-of Table~1 of the assignment brief and whose central architectural claim is
-tested rather than asserted. The contributions are four.
+The objective is a working agentic retrieval system covering all five tasks of
+Table~1 of the assignment brief, whose central claim is tested rather than
+asserted. The contributions are four.
 
-\textbf{First, a four-agent architecture with full task coverage.} A Planner
-performs autonomous query refinement and multi-step retrieval planning, emitting
-a validated directed acyclic graph of sub-queries linked by inter-node
-placeholders. A Retrieval Agent performs tool-augmented retrieval, selecting
-among BM25, dense, and hybrid search under a conditional reranking gate. A
-Knowledge Graph Navigator performs graph traversal over an entity graph built
-from corpus text alone, using bidirectional search to surface the bridge entity
-that multi-hop questions turn on. A Verifier performs self-reflective validation
-and fact checking. An orchestrator, specified as an explicit state machine
-rather than as implicit control flow, coordinates the four.
+\textbf{A four-agent architecture with full task coverage.} A Planner emits a
+validated directed acyclic graph of sub-queries linked by placeholders. A
+Retrieval Agent selects among BM25, dense and hybrid search under a conditional
+reranking gate. A Knowledge Graph Navigator traverses an entity graph built from
+corpus text alone. A Verifier performs self-reflective validation. An
+orchestrator specified as an explicit state machine coordinates the four.
 
-\textbf{Second, the Verifier-to-Planner feedback loop, isolated by ablation.}
-The loop is the difference between this system and the retrieve-once pipeline it
-is measured against, so it is evaluated as a treatment rather than described as
-a feature. An \texttt{agentic\_no\_verifier} configuration disables the backward
-edge while holding everything else fixed, and the trace records which cycle
-produced the answer that was ultimately selected, so the question ``did
-re-planning actually help?'' is answerable from the logs rather than inferred
-from an aggregate.
+\textbf{The Verifier-to-Planner feedback loop, isolated by ablation.} A
+configuration with the backward edge disabled and everything else held fixed
+measures what the loop is worth, and the trace records which cycle produced the
+selected answer.
 
-\textbf{Third, an evaluation protocol that prices agency.} Answer quality and
-retrieval quality are reported alongside agent-specific cost --- model calls per
-question, calls avoided by deterministic rules, tool invocations, plan depth,
-re-plan rate, and latency --- so that no accuracy gain is presented without the
-compute it consumed. The evaluation grid comprises nine configurations ---
-lexical, dense, hybrid, naive-RAG and self-ask baselines, the agentic system
-and its three ablations --- over two multi-hop benchmarks. At the time of
-writing all nine are complete on HotpotQA and seven on 2WikiMultihopQA; Chapter~\ref{ch:implementation} states
-precisely which rows are complete, and no conclusion is drawn from a partial
-one.
+\textbf{An evaluation protocol that prices agency.} Answer and retrieval quality
+are reported beside model calls, tool calls, plan depth, re-plan rate and
+latency, so no gain appears without its cost. Nine configurations run over two
+multi-hop benchmarks, all eighteen cells on the same frozen 250 questions.
 
-\textbf{Fourth, a fully local and reproducible implementation.} Every model runs
-on-device, prompts are versioned files whose rendered SHA-1 is logged with each
-call, every sort carries an explicit tiebreaker, and a test asserts that no
-module imports a network client other than the local Ollama endpoint. The
-system can be re-run by a reader with a consumer GPU and no budget.
+\textbf{A local, reproducible implementation, and an honest account of how
+reproducible.} Every model runs on-device, prompts are versioned files whose
+rendered hash is logged, and a test asserts that no module reaches the network.
+Section~\ref{sec:reproducibility} reports the measured limit of that
+reproducibility, which turned out to be a finding in its own right.
 
-Table~\ref{tab:task-mapping} records where each of the brief's five tasks is
-implemented and where this report treats it, so that the coverage claim above
-can be checked line by line rather than taken from the prose. One clause of the
-brief is deliberately not met. Its description of the implementation chapter
-mentions ``orchestration of external APIs for real-time data enrichment'', and
-its Table~1 gives web search APIs as an example of a tool. This system exposes
-no external API at all: every tool in the registry is a local index or the
-local entity graph, and the network test above forbids anything else. The
-deviation is a design decision rather than an omission. A tool whose output
-changes between runs makes the evaluation unrepeatable and the trace
-unfalsifiable, and the constraint of running with no paid service is one the
-report treats as a feature of the study. The tool registry is written so that
-a real-time connector could be added as one more entry, and
-Section~\ref{sec:thesis} returns to that extension.
+Table~\ref{tab:task-mapping} records where each task of the brief is
+implemented and measured. One clause of the brief is deliberately not met: it
+mentions orchestrating external APIs for real-time enrichment, and this system
+exposes no external API at all, because a tool whose output changes between
+runs makes the evaluation unrepeatable and the trace unfalsifiable. The
+registry is written so that such a connector could be added as one more entry.
 
 \begin{table}[htbp]
   \centering
   \small
-  \caption{The five tasks of the assignment brief's Table~1, the component
-  that implements each, and where the report specifies and measures it. Five
-  tasks are covered by four agents because query refinement and retrieval
-  planning are the same act performed at two points in the loop: once before
-  any evidence exists and again after the Verifier has said what is missing.}
+  \caption{The five tasks of the brief's Table~1, the component implementing
+  each, and where the report specifies and measures it. Four agents cover five
+  tasks because query refinement and retrieval planning are one act performed
+  twice: before any evidence exists, and again after the Verifier has said what
+  is missing.}
   \label{tab:task-mapping}
-  \begin{tabular}{p{4.2cm}p{4.6cm}p{5.6cm}}
+  \begin{tabular}{p{4.0cm}p{4.6cm}p{5.6cm}}
     \toprule
     Task (brief, Table~1) & Agent or component & Specified in; measured in \\
     \midrule
     Autonomous query refinement &
-      Planner: per-node query rewrites; re-plan on a \texttt{ReplanDirective} &
+      Planner: per-node rewrites; re-plan on a directive &
       \S\ref{sec:decomposition}, \S\ref{sec:verification};
       re-plan rate in Table~\ref{tab:agent-metrics-hotpotqa} \\
     Multi-step retrieval planning &
-      Planner: validated sub-query DAG with placeholders; orchestrator state
-      machine &
+      Planner: validated sub-query DAG; orchestrator state machine &
       \S\ref{sec:decomposition}, \S\ref{sec:architecture};
-      \S\ref{sec:ablations} (\texttt{agentic\_no\_planner}) \\
+      \S\ref{sec:ablations} \\
     Tool-augmented retrieval &
-      Retrieval Agent: tool registry, routing table, conditional reranking &
-      \S\ref{sec:tools}; tool calls and calls saved in
-      Table~\ref{tab:agent-metrics-hotpotqa} \\
+      Retrieval Agent: registry, routing table, reranking gate &
+      \S\ref{sec:tools}; Table~\ref{tab:agent-metrics-hotpotqa} \\
     Knowledge graph traversal &
-      KG Navigator: alias linking, bidirectional BFS over the induced entity
-      graph &
+      KG Navigator: alias linking, bidirectional BFS &
       \S\ref{sec:kg-traversal}, \S\ref{sec:preprocessing};
-      \S\ref{sec:ablations} (\texttt{agentic\_no\_kg}) \\
+      \S\ref{sec:ablations} \\
     Self-reflective validation and fact checking &
-      Verifier: NLI entailment, citation grounding, confidence blend, feedback
-      edge &
-      \S\ref{sec:verification}; \S\ref{sec:ablations}
-      (\texttt{agentic\_no\_verifier}), \S\ref{sec:errors},
-      Table~\ref{tab:calibration} \\
+      Verifier: NLI entailment, citation grounding, feedback edge &
+      \S\ref{sec:verification}; \S\ref{sec:ablations}, \S\ref{sec:errors} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-A fifth outcome is not a designed contribution but is reported because it is
-useful. Schema-constrained planning with an 8B model proved more reliable than
-expected on structure and less reliable than expected on self-description:
-across the planning calls measured during development the model produced
-correctly shaped decompositions in 8 of 8 cases with zero format retries, while
-mislabelling its own plan's \texttt{strategy} field in 7 of those 8, including
-obvious bridge and comparison cases. The system therefore derives the strategy
-from the shape of the validated plan graph and overwrites whatever the model
-claimed. Where a small model's self-report can and cannot be trusted is a
-practical result for anyone building agents at this scale.
+A fifth outcome was not designed but is reported because it is useful. During
+development the 8B model produced correctly shaped decompositions in 8 of 8
+cases with no format retries, and mislabelled its own plan's
+\texttt{strategy} field in 7 of those 8. The system therefore derives the
+strategy from the shape of the validated graph and discards what the model
+claimed. Where a small model's self-report can be trusted, and where it cannot,
+is a practical result for anyone building agents at this scale.
 
-\section{Structure of This Document}
-
-Chapter~\ref{ch:data} covers data and preprocessing. It explains why the
-pretraining corpora listed in the brief's Table~2 cannot support an evaluation
-requiring relevance judgements, substitutes two multi-hop retrieval benchmarks
-that carry the necessary ground truth, and documents the passage segmentation,
-deduplication, and stratified sampling that produce the evaluation and
-calibration splits.
-
-Chapter~\ref{ch:methodology} surveys retrieval methodologies. It develops the
-classical foundations --- sparse, dense, and fused retrieval with reranking ---
-establishes why single-shot retrieval fails on compound needs, and then examines
-the agentic alternatives corresponding to each of the brief's five tasks,
-locating this system's design choices within that space.
-
-Chapter~\ref{ch:implementation} presents the implementation and the evaluation.
-It specifies the orchestrator state machine, the per-agent contracts, the
-indexing and budget-enforcement machinery, the baseline and ablation
-configurations, and the metrics; it then reports results, ablations, and a
-qualitative error analysis.
-
-Chapter~\ref{ch:conclusions} assesses what the evidence supports, states the
-limitations of the study without softening them, and sets out the work that
-follows from it.
+Chapter~\ref{ch:data} covers data and preprocessing, Chapter~\ref{ch:methodology}
+the retrieval methodologies and why single-shot retrieval fails on compound
+needs, Chapter~\ref{ch:implementation} the implementation, evaluation,
+ablations, error analysis and the improvement loop that followed, and
+Chapter~\ref{ch:conclusions} what the evidence supports and what follows.

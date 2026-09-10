@@ -3,624 +3,177 @@
 
 \section{Summary of Contributions}
 
-This project set out to test a narrow architectural claim: that adding one
-backward edge to a retrieval-augmented pipeline changes what the system is
-capable of, and that the change can be measured rather than merely described.
+This project set out to test a narrow claim: that adding one backward edge to
+a retrieval-augmented pipeline changes what the system can do, and that the
+change can be measured rather than described. What was built is a four-agent
+system coordinated by an explicit state machine, covering all five tasks of
+the brief's Table~1 and running on one consumer GPU with no paid API. The
+Planner emits a validated graph of sub-queries. The Retrieval Agent routes each
+to BM25, dense or hybrid search, fuses formulations with reciprocal rank
+fusion~\cite{cormack2009reciprocal} and reranks only when the margin is
+narrow. The KG Navigator links entities by alias and runs bidirectional search
+over a graph induced from corpus text. The Verifier resolves citations, scores
+entailment, and below its threshold returns a directive to the Planner instead
+of an answer.
 
-What was built is a four-agent system coordinated by an explicit state machine.
-The Planner decomposes a question into a validated directed acyclic graph of
-sub-queries connected by placeholders. The Retrieval Agent routes each sub-query
-to BM25, dense, or hybrid search via a seven-rule decision table over lexical
-features --- of which, on the evaluated data, only the first rule ever fired,
-because the Planner attached a tool hint to every sub-query --- fuses multiple
-formulations with reciprocal rank
-fusion~\cite{cormack2009reciprocal}, and reranks only when the fused margin is
-narrow. The Knowledge Graph Navigator links entities by alias matching and runs
-bidirectional breadth-first search over an entity graph induced from corpus
-passage text alone. The Verifier resolves citations, scores entailment with a
-DeBERTa cross-encoder, and --- below its confidence threshold --- returns a
-\texttt{ReplanDirective} to the Planner instead of an answer. The four agents
-cover all five tasks of Table~1 of the brief, and the system runs on one
-consumer GPU with no paid API.
-
-Three properties are established independently of the benchmark outcome,
-because they were measured during construction. Structured planning with a local
-8B model is reliable when the output is schema constrained: across the planning
-calls measured in development the model produced correctly shaped decompositions
-in 8 of 8 cases with zero format retries. The same model is unreliable at
-describing what it produced, mislabelling its own plan's \texttt{strategy} field
-in 7 of those 8, which is why strategy is derived from the DAG shape and the
-model's label discarded. And agency is affordable here only because most of it
-is deterministic: a full agentic question costs at worst 15 model calls against
-a cap of 20 and a measured mean of 4.26 on HotpotQA and 3.80 on
-2WikiMultihopQA, since tool routing, entity linking,
-graph traversal, and the confidence arithmetic consume none.
+Three properties were established during construction rather than by the
+benchmark. Schema-constrained planning with a local 8B model is reliable on
+structure, 8 of 8 decompositions correctly shaped with no retries, and
+unreliable on self-description, 7 of 8 strategy labels wrong, which is why
+strategy is derived from the graph and the model's label discarded. Agency is
+affordable here only because most of it is deterministic. And, the finding
+this report did not expect to make, the model's reasoning mode, suppressed
+everywhere for the grid, is worth more than any component of the architecture
+when it is switched on for one agent.
 
 \section{Empirical Findings}
 
-Every number in this section is taken from the tables of
-Chapter~\ref{ch:implementation}, which are generated from the run artefacts;
-none is typed by hand, and where a run has not finished the finding is withheld
-rather than estimated. The headline is stated once, plainly, before the
-structure: the agentic system as designed is not the most accurate system in
-this study and is the only one that can show its work --- but the ablation that
-deletes its first component is both, beating the strongest baseline on answer
-quality while grounding nine citations in ten. The trade the report set out to
-describe turns out to be a trade the architecture imposed on itself.
+The evaluation answers four questions, each of which had a defensible negative
+answer, and the protocol was fixed before any was resolved.
 
-The evaluation answers four questions. Each is stated explicitly because each
-has a defensible negative answer, and the protocol was fixed before any of them
-was resolved.
+\textbf{Does decomposition beat single-shot retrieval?} No, and it is a
+significant no on one of two datasets. Against \texttt{self\_ask}, the
+strongest baseline that answers, \texttt{agentic\_full} is $-0.093$ F1
+$[-0.145, -0.039]$ on HotpotQA and $-0.043$ $[-0.100, +0.014]$ on
+2WikiMultihopQA. On evidence the answer is different in kind: scored the same
+way for every row, on the recall of the whole pool, the agentic system leads
+every baseline significantly, and its citations resolve to real sentences at
+0.960 and 0.976 where no baseline's resolve at all. Decomposition improves
+which evidence is cited, and how checkably, and degrades where in a fused
+list it appears.
 
-\textbf{Does decomposition beat single-shot retrieval?} Two reference points
-are needed, because no single baseline is comparable on every column.
-\texttt{hybrid\_rerank}, the strongest non-agentic ranker, is the reference
-for retrieval and supporting-fact quality; it attempts no answer, so it cannot
-be the reference for answer quality, and the generated tables render its
-answer columns as \texttt{--} rather than as a zero that would read as a
-failed attempt. The answer reference is \texttt{self\_ask}, the strongest
-baseline that produces an answer string, and every answer-quality delta below
-is a paired bootstrap against it over the identical 250 questions. An earlier
-draft of this report described the planner's fallback floor as
-\texttt{hybrid\_rerank} ``by construction'' and argued that the agentic system
-could lose only through judgement; the ablation grid shows the floor is a
-one-node agentic system that still synthesises and verifies, and the argument
-is withdrawn.
-The answer is no, and it is a significant no on one of the two datasets. On
-HotpotQA \texttt{agentic\_full} scores EM 0.432 and F1 0.510 where
-\texttt{self\_ask} scores 0.504 and 0.603 and \texttt{naive\_rag} 0.496 and
-0.581; the paired difference in F1 against \texttt{self\_ask} is $-0.093$ with
-a 95\% interval of $[-0.145, -0.039]$, which excludes zero, so the deficit is
-established and not a fluctuation. On 2WikiMultihopQA the figures are 0.224
-and 0.267 against \texttt{self\_ask}'s 0.264 and 0.310 and
-\texttt{naive\_rag}'s 0.152 and 0.200, and the paired difference of $-0.043$
-$[-0.100, +0.014]$ spans zero, so there the deficit is a consistent point
-estimate and nothing stronger. Against single-shot retrieve-then-generate the
-picture is more favourable on the harder benchmark, where 2WikiMultihopQA's
-longer chains punish a single query and \texttt{agentic\_full} sits seven
-exact-match points above \texttt{naive\_rag}, but no paired interval between
-those two is computed and their deltas against the common reference overlap,
-so that ordering is not certified either. What the grid does establish is
-that decomposition with verification loses to decomposition without it on the
-answer string, significantly on HotpotQA and directionally on
-2WikiMultihopQA.
+\textbf{Does the backward edge pay for itself?} Conditionally. Removing it
+costs $0.037$ F1 on HotpotQA at $p = 0.008$ and $0.001$ on 2WikiMultihopQA at
+$p = 1.000$, while the loop fired on nearly half the questions of both and
+doubled the cost of both. The counterweight is small, 2 and 5 false rejects,
+so the answer selection is doing its job; the failure is the other way, 92 and
+154 false accepts, and it is a property of a confidence signal with an AUC of
+0.633 rather than of where the line was drawn. The edge helps on one dataset
+and not the other, and this report states it that way.
 
-On evidence the answer is different in kind rather than simply reversed.
-Supporting-fact F1 is 0.481 against 0.412 for \texttt{hybrid\_rerank} on
-HotpotQA and 0.421 against 0.327 on 2WikiMultihopQA, on neither of which is a
-significance mark placed: the two rows are scored under different protocols,
-and the like-for-like column is Pool SP-R, where the lead is significant on
-both datasets. The generative baselines were reported in an earlier
-draft at 0.000 on that metric, as systems that ``emit no supporting facts'';
-that was a harness defect in resolving their citations, and corrected they
-score 0.405 and 0.412 on HotpotQA and 0.318 and 0.327 on 2WikiMultihopQA ---
-starred in the tables, because they are scored on their whole evidence pool
-where the agentic system is scored on the sentences it cited. The two
-protocols trade precision against recall in opposite directions --- on
-HotpotQA the agentic cited set scores a precision of 0.654 and a recall of
-0.406 where \texttt{self\_ask}'s pool scores 0.302 and 0.696 --- and one F1
-across them does not rank the systems. Scored the same way for every row,
-on the recall of the whole evidence pool, the agentic system leads every
-baseline significantly, 0.793 against 0.706 for \texttt{hybrid\_rerank} on
-HotpotQA and 0.684 against 0.622 on 2WikiMultihopQA. What is categorical is
-citation grounding: 0.960 and 0.976 for the agentic system against 0.000 for
-every baseline, whose citations resolve to nothing. Fused
-retrieval quality moves the other way --- nDCG@10 of 0.763 and 0.723 against
-0.835 and 0.756 for the hybrid baseline, both significantly worse --- because
-the reported ranking for a multi-hop system is the fusion of several narrow
-sub-query lists and fusion dilutes the head of the list. On 2WikiMultihopQA
-the two systems tie exactly on Recall@10 at 0.727, which locates the loss in
-ordering rather than in coverage. So decomposition improves which evidence is
-cited, and how checkably, and degrades where in a single fused list the
-evidence appears; the aggregate ranking metric alone would have concealed
-that.
+\textbf{What does agency cost, and where does it fail?} About three times the
+model calls of the strongest baseline and rather more in wall clock, for a
+result that is worse on the answer string. It fails at composition, having
+stopped failing at retrieval: decomposition and bridge-link errors largely
+disappear against the ranker, and synthesis error at 0.228 and 0.236 replaces
+them. The system finds the right sentences and extracts the wrong span.
 
-\textbf{Does the backward edge pay for itself?} This is the central claim, and
-it is measured three ways. First, the marginal effect: \texttt{agentic\_full}
-against \texttt{agentic\_no\_verifier}, which removes the loop and holds
-everything else constant. Second, conditional effectiveness, restricted to the
-questions where a re-plan fired and comparing the first cycle's answer against
-the one finally selected --- because if re-planning is rare the marginal effect
-will be small even when the mechanism works perfectly on the cases it reaches.
-Third, the counterweight: false rejects, where the Verifier sent back an answer
-that was already correct. A loop that fires often and improves nothing, or one
-that rarely fires, is a legitimate and reportable outcome; the trace records the
-selected cycle per question precisely so this can be settled from evidence.
-All three measurements are now available on HotpotQA, and the decisive one
-answers the question the report was written to ask. The
-loop is genuinely exercised: the re-plan rate is 0.472 on HotpotQA and 0.392 on
-2WikiMultihopQA, so on roughly two questions in five the Verifier declined to
-answer and sent a directive back to the Planner. Whatever else is true, the
-backward edge is not decorative, and the anti-repetition ban list on sub-query
-text is doing real work at that frequency. The counterweight is small: the
-traces record 2 false rejects on HotpotQA and 5 on 2WikiMultihopQA, and those
-are exactly the questions marked recoverable, meaning some discarded cycle had
-been right. Selecting the answer by maximum confidence over all cycles, with
-ties broken toward the earlier one, is therefore doing what it was designed to
-do --- a bad re-plan almost never overwrites a good first attempt.
-
-The failure lies in the other direction, and it is large. The Verifier accepted
-92 answers on HotpotQA and 154 on 2WikiMultihopQA that the gold supporting
-facts do not support. A mechanism that fires on 47.2\% of questions while
-rubber-stamping that many unsupported answers is not too aggressive but far too
-permissive, and the calibration evidence below says why raising the threshold
-is not an easy remedy.
-
-The marginal effect is the central result of this report, and on HotpotQA it
-is positive and significant. \texttt{agentic\_no\_verifier} disables the
-backward edge and holds everything else fixed; over the same 250 questions it
-scores an exact match of 0.396 and F1 of 0.474 against the full system's 0.432
-and 0.510, a paired $\Delta$F1 of $-0.037$ with a 95\% interval of
-$[-0.065, -0.011]$ and $p = 0.008$. The loop that fires on nearly half the
-questions does improve the aggregate, by just under four F1 points, at a cost
-of roughly doubling the model calls, 4.26 against 2.06, and the median
-latency, 28.3\,s against 16.5\,s. That is the claim the architecture was built
-to test, it is measured rather than asserted, and on HotpotQA it lands in the
-direction the design predicted.
-
-On 2WikiMultihopQA it does not. The same ablation over that dataset's 250
-questions scores an exact match of 0.216 and F1 of 0.266 against the full
-system's 0.224 and 0.267: a paired $\Delta$F1 of $-0.001$, $[-0.025, +0.025]$,
-$p = 1.000$. The loop was not idle there --- it ran on 98 of the 250 questions
-and a later cycle was selected on 64 --- and it charged the same price, 3.80
-model calls against 2.03 and a median of 35.4\,s against 18.4\,s. It simply
-bought nothing the evaluation can detect. Chapter~\ref{ch:implementation}
-gives the two readings the grid permits: that a system at F1 0.267 is failing
-for reasons a second attempt at the same corpus cannot repair, and that
-2WikiMultihopQA's comparison templates defeat an entailment check that reads
-one answer sentence. The ablated system being \emph{better} attributed there
---- SP-F1 0.465 against 0.421 --- supports the second.
-
-So the finding is conditional, and this report states it conditionally: the
-backward edge helps on HotpotQA and not on 2WikiMultihopQA. The report's own
-standard is that one dataset does not settle a direction, and having now run
-the second, the honest conclusion is that the two disagree. It is also a
-statement about the edge, not about the system: a verifier that adds four
-points on one dataset to an answer accuracy that is itself nine points behind
-\texttt{self\_ask} has proved that feedback can help, not that this system is
-the one to deploy.
-
-The planner ablation, complete on HotpotQA at the same time, produced the
-result the grid was not designed to expect. \texttt{agentic\_no\_planner}
-scores \emph{above} the full system, at an exact match of 0.456 and F1 of
-0.543, with $\Delta$F1 $= +0.033$ $[-0.017, +0.086]$ and $p = 0.186$ --- not
-significant, but pointing against the component the brief lists first --- at
-1.35 model calls and a median of 9.7\,s, roughly a third of the full system's
-cost. It is not the \texttt{hybrid\_rerank} floor: it still synthesised and
-verified, grounded its citations at 0.936, and its Verifier triggered a
-re-plan on 18.8\% of questions, though every such re-plan was discarded as a
-duplicate of the identity plan and none executed. The reading that
-fits every other row is that HotpotQA's two-hop questions are largely within
-reach of one well-formed hybrid query, so decomposition dilutes a ranking that
-was already good and asks an 8B model to compose across sub-answers it would
-not otherwise have had to.
-
-2WikiMultihopQA answered that question against the Planner, and it is the
-most consequential result in this study. There
-\texttt{agentic\_no\_planner} scores an exact match of 0.324 and F1 of 0.388
-against the full system's 0.224 and 0.267: $\Delta$F1 $= +0.121$
-$[+0.067, +0.173]$, $p < 0.001$, at 1.26 model calls against 3.80 and a median
-of 4.5\,s against 35.4\,s. Removing the component the brief lists first is
-worth twelve F1 points on the harder dataset, at a third of the calls and an
-eighth of the wall clock.
-
-That row is also the only configuration anywhere in this grid that
-significantly beats a baseline on answer quality. Against \texttt{self\_ask}
-it scores $\Delta$F1 $= +0.078$ $[+0.021, +0.135]$ --- at 1.26 model calls
-against 1.24, a median of 4.5\,s against 13.2\,s, and a citation grounding of
-0.900 against 0.000. Cheaper, faster, more accurate and auditable, all at
-once. The report's headline --- that the agentic system trades accuracy for
-accountability --- is true of \texttt{agentic\_full} and false of this
-ablation of it, which gives up nothing.
-
-The configuration deserves a name it does not have. With the Planner removed
-the plan is one identity node, so the system issues a single query exactly as
-\texttt{naive\_rag} does; and \texttt{naive\_rag} scores 0.152 and 0.200 on
-the same questions. The exact-match gap between two systems that
-each ask one question is everything else in the stack: graph evidence beside
-the retrieved passages, sentence-granular pooling, synthesis constrained to
-cite what it used, and a verification pass. The agentic machinery earns its
-cost. The decomposition was spending it.
-
-Across both datasets the direction is consistent and grows with difficulty:
-$+0.033$ and not significant on two-hop questions, $+0.121$ at $p < 0.001$ on
-longer chains. That ordering rules out the dilution explanation, which
-predicts the opposite --- 2WikiMultihopQA's rankings are the worse of the two,
-Recall@10 0.727 against 0.876, so a cost that came from diluting a good
-ranking should have fallen there. What grows with chain length is the number
-of sub-answers an 8B model must compose across. The Planner's failure is not
-that it writes bad sub-queries; it is that it sets its own synthesiser a task
-that model cannot finish.
-
-The graph ablation completes the HotpotQA grid with a third result that
-qualifies the architecture rather than confirming it. \texttt{agentic\_no\_kg}
-scores an exact match of 0.404 and F1 of 0.501, a paired $\Delta$F1 of
-$-0.009$ $[-0.048, +0.029]$ with $p = 0.646$, and its retrieval is
-statistically indistinguishable from the full system's --- Recall@10 of 0.820
-against 0.812, nDCG@10 of 0.766 $[0.737, 0.793]$ against 0.763 $[0.734,
-0.791]$ --- with fifteen bridge-link failures rather than seventeen. The
-knowledge graph was added to find bridge entities, and on this dataset it
-cannot be shown to find any the retriever had not already surfaced, while
-accounting for almost half of the system's tool calls and more than half of
-its median latency.
-
-2WikiMultihopQA was where the case for the component had to be made, and it is
-not made there either. The same ablation over its 250 questions gives an exact
-match of 0.256 and F1 of 0.285 against 0.224 and 0.267, a paired $\Delta$F1 of
-$+0.018$ $[-0.015, +0.053]$, $p = 0.252$ --- a second null, pointing if anything the
-other way, on the dataset whose chains are longer. The cost is unchanged: tool
-calls 16.00 against 8.65 and a median of 35.4\,s against 15.8\,s. Across both
-datasets the KG Navigator accounts for roughly half the system's tool calls
-and more than half its median latency, and neither evaluation can detect
-anything it returns. Chain length was the variable that should have unlocked
-it, and lengthening the chains changed nothing.
-
-\textbf{What does agency cost?} Quality is reported alongside model calls per
-question, calls avoided by deterministic rules, tool invocations, plan depth,
-re-plan rate, and latency, so no accuracy gain is quoted without its compute
-price. On the same axis the tool-routing table is compared against model-driven
-selection on a held-out slice, by agreement rate, retrieval quality, and wall
-clock: the claim that a rule matches a model's decision at zero cost is only
-worth making if the agreement rate is stated.
-It costs about three times the model calls of the strongest baseline and rather
-more than that in wall clock. \texttt{agentic\_full} spends 4.26 model calls
-per question on HotpotQA and 3.80 on 2WikiMultihopQA against 1.24 and 1.46 for
-\texttt{self\_ask}, and issues 14.83 and 16.00 tool calls against 2.41 and
-2.86. Latency is reported as a median because one HotpotQA question ran for
-18.3 hours inside a single call, an outlier that an earlier draft's mean
-reported as the per-question cost. On the medians, \texttt{agentic\_full}
-takes 28.3\,s per question on HotpotQA against 4.5\,s for \texttt{self\_ask}
-and 4.9\,s for \texttt{hybrid\_rerank}, and 35.4\,s on 2WikiMultihopQA against
-13.2\,s and 8.3\,s. Set against a result that is \emph{worse} on answer
-accuracy, this is not a good trade for a system whose deliverable is an answer
-string, and the report says so rather than presenting the attribution gain as
-though it settled the arithmetic. It is a defensible trade only where an
-unattributable answer has little value.
-
-The \textit{Saved} column is the cost finding that had to be revised most.
-An earlier draft reported 7.10 and 7.19 model calls per question displaced by
-deterministic rules, more than the system spent, and called it the clearest
-engineering result in the work. The count was inflated: it credited a
-knowledge-graph entity-linking call on every sub-query that this
-configuration never issues, and it missed the extraction-ladder rungs that
-did avoid a call. Under the corrected definition, in which a saved call is
-one a configured model path would have made and a rule pre-empted, the
-column reads 2.60 and 3.10 calls per question against 4.26 and 3.80 spent,
-and Chapter~\ref{ch:implementation} prints the per-rule decomposition beside
-it. The deterministic components displace a real
-minority of the inference a fully model-driven version of this design would
-spend; they do not displace more than the three reasoning agents consume, and
-that sentence is withdrawn wherever the earlier draft made it.
-
-The comparison that would have tested the routing rules directly has not been
-run, and as the code stands cannot be. The rule-versus-model experiment
-described in Chapter~\ref{ch:methodology} --- clearing the
-\texttt{heuristic\_shortcut} flag and re-running the calibration slice through
-the selection prompt --- produced no artefact in \texttt{results/}, so no
-agreement rate is available and none is reported. The trace also shows why
-the experiment would not have measured what it was designed to measure: the
-Planner attached a tool hint to every sub-query in the headline run, the
-retriever honours a hint before it consults the shortcut flag, and so the
-model router is unreachable and the six lexical rules behind the hint rule
-never executed. The routing decision was made inside the planning call, and
-what the table saved was a second call for the same decision. That is a
-finding about where the division of labour between Planner and Retrieval
-Agent actually fell, and it should be read as one; the claim that lexical
-rules decide as a model would have decided is untested.
-
-\textbf{Where does it fail?} The error analysis partitions failures by the stage
-that caused them --- decomposition, first-hop retrieval, placeholder resolution,
-extraction, synthesis --- because an aggregate score attributes nothing, and a
-system that fails mostly at retrieval calls for entirely different subsequent
-work than one that fails mostly at composition.
-It fails at composition, and it used to fail at retrieval. Measured against
-\texttt{hybrid\_rerank}, the full system reduces the share of questions
-labelled \texttt{decomposition\_error} from 0.248 to 0.064 on HotpotQA and from
-0.552 to 0.088 on 2WikiMultihopQA, and \texttt{bridge\_link\_failure} from
-0.552 to 0.068 and from 0.200 to 0.028. Those two categories are precisely the
-ones Chapter~\ref{ch:introduction} argued a single-shot ranker cannot address
-in principle, and the machinery built to address them has very largely done so.
-Neither dataset records a single parse failure or budget exhaustion in any
-configuration, so nothing in these results is an artefact of malformed model
-output or of a question that ran out of allowance, and only 16 of 142 HotpotQA
-errors and 23 of 194 on 2WikiMultihopQA fall through the taxonomy unlabelled.
-
-What is left is \texttt{synthesis\_error}, at 0.228 and 0.236 --- the dominant
-agentic failure mode on both datasets and more than three times the
-corresponding rate for \texttt{self\_ask}, 0.064 and 0.076. Read together with
-a supporting-fact F1 that leads every retrieval baseline and an exact match
-that does not, the finding is specific: the system retrieves the right
-sentences and then extracts or composes the wrong span from them. This is the
-single most useful thing the evaluation produced, because it says where the
-next unit of engineering effort belongs. It does not belong in more planning
---- the planner ablation above says as much --- nor in deeper traversal or
-better fusion, all of which are already delivering the evidence. It belongs
-in answer extraction, and by extension in a verifier that can distinguish a
-well-cited answer from a correct one --- a distinction the present confidence
-blend, which scores an answer \emph{sentence} against its citations and never
-the answer string itself, is structurally unable to make. The limitations
-below give the trace record that demonstrates it.
-
-One finding did not require the benchmark, because it surfaced while preparing
-to run it. It appears in the next section, being as much limitation as result.
+\textbf{What actually improved it?} Not planning, not traversal, not a wider
+evidence budget, not a larger model, and not voting. Deleting the Planner was
+worth twelve F1 points on 2WikiMultihopQA at a third of the cost. Letting the
+synthesiser reason, on the one-node plan, then took exact match from 0.432 to
+0.524 on HotpotQA and from 0.224 to 0.456 on 2WikiMultihopQA, ties the
+strongest baseline on the first and beats it by 0.192 on the second, with one
+change and one mechanism. Every other hypothesis was dropped on its own
+evidence, two of them before any GPU time was spent.
 
 \section{Limitations}
 
-\textbf{Sample size, and an incomplete grid.} Results come from 250-question
-stratified samples of each dev split rather than the full splits. At that size
-the per-system 95\% interval on token F1 spans roughly twelve points ---
-$[0.451, 0.571]$ for \texttt{agentic\_full} on HotpotQA --- and an earlier
-draft argued from the overlap of such intervals that the deficit against
-\texttt{self\_ask} could not be separated from noise. That was the wrong test:
-the systems answer the same questions, the comparison is paired, and the
-paired interval on the difference, $[-0.145, -0.039]$ on HotpotQA, excludes
-zero. The width of the marginal intervals is still the right caution about
-effect sizes --- nothing here should be read as a precise one --- but
-significance is decided by the paired column and not by overlap. The grid is
-also not finished. The ablations run against the same 250-question evaluation
-split rather than a subsample. The grid is complete: nine configurations on
-two datasets, eighteen of eighteen cells, every one over the same frozen 250
-questions. All three components are therefore measured twice, and two of the
-three second measurements changed the reading: the verifier's HotpotQA gain
-vanished, and the planner's HotpotQA null became a significant twelve-point
-improvement from deleting it. Only the graph read the same way twice.
-A component that looked significant on HotpotQA turned out to do nothing on
-2WikiMultihopQA, and one that looked like a harmless null there turned out to
-be doing measurable damage. The graph is the one component whose reading did
-not change, a null both times --- and given what happened to the other two,
-the only one that can now be called settled.
+\textbf{Sample size.} Results come from 250-question stratified samples. The
+paired intervals are the right test and they decide significance, but nothing
+here should be read as a precise effect size.
 
-\textbf{The runs are not exactly reproducible, and the report has an error bar
-it did not report.} Every interval in this document is a paired bootstrap over
-questions. That answers one question --- what if a different 250 had been
-sampled --- and is silent about another: what does the same system do on the
-same questions when it is simply run again. With a decoding temperature of
-0.0 and a fixed seed the intended answer was ``nothing''.
+\textbf{The runs are not exactly reproducible.} Every interval in this report
+is a bootstrap over questions, which answers what a different 250 would have
+shown and is silent about what the same system does on the same questions run
+again. With temperature 0 and a fixed seed the intended answer was nothing.
 
 \input{../results/tables/replication.tex}
 
 Table~\ref{tab:replication-drift} shows it is not nothing.
-\texttt{agentic\_no\_verifier} was re-run on the identical HotpotQA slice ---
-a configuration with no verifier, and therefore no feedback loop whose
-stochasticity could be blamed --- and exact match moved by $0.012$, F1 by
-$0.014$, with 15 of the 250 answers changing. Thirteen of those fifteen also
-drew a \emph{different evidence pool}, which locates the divergence in
-retrieval rather than in generation.
+\texttt{agentic\_no\_verifier}, a configuration with no feedback loop to
+blame, was re-run on the identical HotpotQA slice: exact match moved by 0.012,
+F1 by 0.014, and 15 of 250 answers changed. The runs' own metadata records one
+cause, an unpinned Python hash seed that let evidence pools assemble from sets
+in varying order, and the harness now pins it. Section~\ref{sec:reproducibility}
+records the deeper one, which pinning does not remove: on a local inference
+server with prefix caching, identical prompts at temperature zero produce
+different completions, and on the calibration slice between 6 and 14 percent
+of answers change between executions of byte-identical code. The consequence
+is that an effect of a point or two is not established by a single execution.
+The planner ablation and the kept configuration's gains are comfortably clear
+of that floor; the graph's two nulls and the verifier's 2WikiMultihopQA null
+are inside it and remain nulls. Every interval elsewhere is narrower than the
+true uncertainty, because it holds the execution fixed.
 
-The cause is recorded in the runs' own metadata. \texttt{meta.json} stores
-\texttt{seeding.pythonhashseed}: it is \texttt{null} for the evaluated grid
-and \texttt{0} for the re-run. Python randomises string hashing per process
-unless that variable is set, the evidence pool is assembled from sets, and set
-iteration order follows the hash. The CLI sets the variable; the harness
-invoked directly inherits whatever the environment had, which for the
-evaluated grid was nothing. Every number in this report therefore comes from
-one execution of a pipeline whose retrieval order was not pinned.
+\textbf{Model scale and domain.} Every result is conditional on a 4-bit 8B
+model, and the improvement loop measured that a 14B model does not fit this
+hardware at an acceptable throughput. Both benchmarks are Wikipedia: clean,
+segmented and densely linked, which the entity graph exploits. Nothing here is
+evidence of transfer to legal, biomedical or enterprise collections.
 
-The consequence is stated rather than buried, because it changes how three
-rows should be read. An effect smaller than roughly $0.014$ F1 is not
-established by a single execution. That leaves the planner ablation on
-2WikiMultihopQA ($+0.121$) and the verifier ablation on HotpotQA ($-0.037$)
-comfortably clear of the drift --- nine times and two and a half times it
-respectively --- and puts the knowledge graph's $-0.009$ and $+0.018$, and the
-verifier's $-0.001$ on 2WikiMultihopQA, inside it. Those three were reported
-as nulls and remain nulls; what this rules out is reading any of them as a
-small real effect in either direction. It also means the confidence intervals
-elsewhere are narrower than the true uncertainty, since they hold the
-execution fixed. Pinning \texttt{PYTHONHASHSEED} in the harness and re-running
-the grid is a half-day of compute and the first thing a continuation of this
-work should do.
+\textbf{The Verifier checks the sentence, not the answer.} The entailment
+hypothesis is the synthesiser's answer sentence; the answer string the metrics
+score is never entailed against anything, and the trace record in
+Section~\ref{sec:errors} shows the two coming apart at a confidence of 0.82.
+The correction, entailing a hypothesis built from the question and the answer
+string, is straightforward and was not in place for any run reported here.
 
-\textbf{Model scale.} Every result is conditional on a 4-bit quantised 8B model.
-The planner findings in particular are unlikely to transfer: a frontier model
-would probably label its own strategy correctly, making the DAG-derived override
-unnecessary, and would produce better decompositions in the first place,
-reducing the headroom the feedback loop has to work in. The cost profile is
-equally hardware-specific; at 52 tokens per second the case for replacing model
-calls with rules is far stronger than against a fast hosted endpoint.
+\textbf{An uncalibrated threshold.} The threshold of 0.55 was set a priori.
+The post-hoc sweep over the calibration slice found the confidence blend to be
+a usable ranking cut-point and an unusable probability, with an optimal
+threshold whose bootstrap interval spans 0.45 to 0.64 and does not identify an
+operating point. A genuine sweep needs one full run per candidate, since the
+threshold changes what re-plans and therefore what is answered.
 
-\textbf{Domain.} Both benchmarks are built from Wikipedia: clean, well-segmented,
-densely hyperlinked, and written in a consistent register --- and the entity
-graph exploits exactly those properties. Nothing in this work is evidence that
-it generalises to legal, biomedical, or enterprise collections, where entity
-mentions are less standardised and passages are longer and less
-self-contained.
+\textbf{Re-planning overwrites state, and the budget is cooperative.}
+Sub-query identifiers restart at \texttt{q1} in every revision, so a re-plan
+overwrites the previous cycle's results and the trace cannot fully reconstruct
+what the synthesiser saw in cycle zero. The 300\,s budget is tested between
+calls and cannot pre-empt one, which is how a question ran for 18.3 hours
+inside a suspended call. Both are recorded defects, not applied to any run
+here.
 
-\textbf{Entity linking.} Entities are linked by alias matching against a table
-built from passage titles and their mechanical variants, not by a trained
-linker. This is fast, deterministic, and interpretable, and it fails silently on
-nominal and pronominal reference and on any entity whose surface form in running
-text does not resemble its page title. Falling back to retrieved passage titles
-as seeds limits the damage but does not measure it.
-
-\textbf{An uncalibrated threshold.} The Verifier's confidence threshold of 0.55
-and the weights of the confidence blend were set a priori, not learned. The
-threshold directly controls the re-plan rate, itself a headline agent metric, so
-tuning it on the evaluation questions would be leakage. The disjoint
-50-question calibration slice of each dataset exists for exactly this purpose:
-the design called for the threshold to be swept over it and frozen before the
-evaluation run rather than accepted as a guess. That is not what happened.
-The sweep reported in Tables~\ref{tab:calibration}
-and~\ref{tab:calibration-reliability} was run after the evaluation, over the
-range $[0.40, 0.75]$ in steps of 0.01, on the 50-question HotpotQA calibration
-slice run \texttt{agentic\_full\_hotpotqa\_20260904T184256Z}, reading
-confidences that a single run at 0.55 had already produced; the threshold
-that governed every evaluation run is the a priori one. The sweep returned a
-more useful answer than a better threshold. The confidence blend is not a
-probability. Expected calibration error is 0.332 and maximum calibration error
-0.636 against a base rate of 0.340, and the Brier score of 0.339 is
-\emph{worse} than the constant predictor that always returns the base rate, a
-Brier skill of $-0.510$.
-Nothing in this report should be read as saying that a confidence of 0.7 means
-a seven-in-ten chance of being correct, and the report does not say it
-anywhere. What the same signal does have is weak discrimination: the area under
-the ROC curve is 0.633, above chance but only modestly. Calibration and
-discrimination are different properties and this signal has the second without
-the first, which is exactly the profile of a usable \emph{ranking cut-point} and
-an unusable probability. The threshold should be understood, and is used, as
-the former.
-
-On the threshold itself the sweep declines to act, and the reasons matter more
-than the value. Youden's $J$ is maximised at 0.54, but a bootstrap over the
-selection returns a 95\% interval of $[0.45, 0.64]$ --- a width of 0.19 over a
-range swept from 0.40 to 0.75, which does not identify an operating point at
-all. The
-configured 0.55 lies inside that interval, and the paired comparison of
-decision accuracy between 0.54 and 0.55 gives $[-0.060, +0.060]$ at $p = 1.000$
-with the selected value enjoying the advantage of having been fitted on the
-same 50 questions it was then scored on. Fifty labelled questions is below the
-threshold at which the calibration module will propose replacing a configured
-value at all, so its recommendation to retain 0.55 is a refusal to act on thin
-evidence rather than an endorsement of the guess. The honest statement is that
-the threshold remains unvalidated and that the study now knows precisely how
-unvalidated it is. A genuine sweep would require one full evaluation run per
-candidate threshold, since changing the threshold changes whether a re-plan
-fires and therefore changes the plan, the evidence and the answer; the
-post-hoc sweep reads confidences that were all produced under 0.55 and cannot
-substitute for that.
-
-This connects directly to the Verifier's 92 and 154 false accepts. With
-discrimination this weak, moving the acceptance boundary trades false accepts
-for false rejects along a shallow curve rather than removing them, so the
-permissiveness reported in the previous section is a property of the confidence
-signal and not of where the line was drawn on it. Improving the loop means
-improving the signal --- atomic claim decomposition, cross-source agreement, a
-better entailment model --- not retuning the threshold.
-
-\textbf{The Verifier checks the sentence, not the answer.} The NLI hypothesis
-is the Synthesizer's \texttt{answer\_sentence} field, chosen because a
-declarative sentence is what an entailment model is trained on; the
-\texttt{answer} string that the metrics score is never entailed against
-anything. The two can come apart, and when they do the blend cannot see it.
-HotpotQA question \texttt{5a7af32e55429931da12c99c} is the cleanest instance
-in the trace. The system answered \emph{New York City} where the gold answer
-is \emph{Brooklyn, New York}, and emitted as its answer sentence a sentence
-copied from an evidence passage unrelated to the question. The Verifier
-scored NLI support at 0.995 and citation grounding at 1.0, since the copied
-sentence is trivially entailed by the sentence it was copied from, recorded a
-retrieval agreement of 0.0, and accepted the answer at a confidence of 0.82.
-Every component signal was computed correctly; the architecture asked the
-wrong question. A verifier that accepts an answer because its
-\emph{explanation} is well supported will accept any answer whose explanation
-is a quotation, and that is a structural gap rather than a tuning one. The
-correction --- entail a hypothesis built from the question and the answer
-string, or check that the answer string occurs in the entailed sentence ---
-is straightforward, and it was not in place for any run reported here.
-
-\textbf{Re-planning overwrites the previous cycle's state.} Sub-query
-identifiers restart at \texttt{q1} in every plan revision, and the per-sub-query
-result, knowledge-graph result and extracted-answer maps on the question state
-are keyed by that identifier. A re-plan's \texttt{q1} therefore overwrites
-cycle~0's \texttt{q1}, while any identifier the new plan does not reuse
-survives from the earlier cycle, stale. Of the 118 HotpotQA questions on which
-\texttt{agentic\_full} re-planned, all 118 had at least one cycle-0 identifier
-reused by a later plan and so lost that identifier's cycle-0 results, and 92
-end with at least one entry in \texttt{retrieved} whose key the final plan does
-not use --- a result carried over from a cycle that is no longer current. Two consequences follow. The retrieval metrics reported for
-the 47.2\% of HotpotQA questions that re-planned are computed over a
-last-cycle-plus-stale pool rather than over everything the question retrieved,
-so the agentic rows of the retrieval tables are a lower bound on what was
-found. And the trace is not the complete audit record the design document
-promises: the plans are preserved immutably, but the per-sub-query results
-they produced are not, so a reader cannot reconstruct what the Synthesizer
-was shown in cycle~0 of a re-planned question. The fix is to namespace the
-state by cycle; it is recorded as a known defect in the design document and
-was not applied to any run reported here.
-
-\textbf{The wall-clock budget is cooperative.} The 300\,s question budget is
-tested between DAG nodes and before a model call is issued, never during one,
-and the NLI and reranker invocations carry no timeout at all. It therefore
-cannot pre-empt a call that blocks, which is how one HotpotQA question ran
-for 18.3 hours inside a single Synthesizer call --- almost certainly a
-suspended host rather than a hung model --- without any guard firing. The
-per-question latency tables print the median with that maximum beside it so
-the outlier stays visible; the defect stands, and a per-invocation bound is
-the correction.
-
-\textbf{Silent degradation, discovered the hard way.} The Verifier never blocks:
-if the NLI cross-encoder cannot be loaded it falls back to token containment
-between the answer and the cited evidence. That fallback is safe for the process
-and catastrophic for the results. On a comparison claim supported by only one
-operand's date, token containment scored 1.000 support where DeBERTa scores
-0.0008 entailment on the same pair. Because NLI carries 0.45 of the confidence
-blend, a silent fallback pushes essentially every answer above the 0.55
-threshold, every verdict becomes \texttt{accept}, and the re-plan loop --- the
-mechanism the project exists to measure --- never fires. The run completes, the
-numbers look plausible, and the central result is an artefact of a missing model
-file. A preflight check now confirms the encoder scores a self-entailment
-correctly before any evaluation starts. The general lesson outweighs the bug:
-graceful degradation and honest measurement are in direct tension, because the
-fallbacks that keep a long run alive are exactly the ones that quietly change
-what is measured. Every degradation path needs a preflight gate or a trace flag.
+\textbf{Silent degradation.} If the entailment model cannot load, the Verifier
+falls back to token containment, which scored 1.000 where the model scores
+0.0008; every verdict becomes accept and the loop never fires. A preflight
+check now refuses to start without the encoder. The general lesson outweighs
+the bug: the fallbacks that keep a long run alive are exactly the ones that
+quietly change what is measured, and every degradation path needs a gate or a
+trace flag. The unassigned \texttt{truncated} field of
+Section~\ref{sec:improvement} is the same lesson from the other side.
 
 \section{Future Work}
 
-\textbf{Multi-agent coordination beyond a fixed topology.} The agent graph here
-is static: the orchestrator invokes the same four agents in the same order, and
-the only dynamism is the re-plan edge. A natural extension instantiates agents
-per question --- several retrieval agents specialising in different sub-corpora,
-or a negotiation between graph-first and text-first strategies whose
-disagreement is itself a signal. Workflow-level agent composition has a
-precedent in the geospatial copilot literature~\cite{lee2025multiagent}, and how
-many agents such a scheme can add before cost outruns benefit is directly
-measurable with the instrumentation already in place.
+\textbf{Synthesis, not planning.} The evidence points one way. The next unit
+of effort belongs in answer extraction and in a verifier that can distinguish a
+well-cited answer from a correct one: atomic claim decomposition, a hypothesis
+that includes the answer string, and cross-source agreement, so the directive
+tells the Planner what to look for rather than only that something is missing.
 
-\textbf{Learned rather than heuristic decision-making.} The tool-routing table,
-the rerank gate, and the confidence blend are hand-specified functions whose
-inputs are logged on every question, making each a supervised learning problem
-with a free training set. The interesting version is not replacing the rules
-with a classifier but quantifying the gap: if a learned router beats the rule
-table by a negligible margin, that is a stronger result for the rules than any
-argument. The first step is cheaper than learning anything: the trace records
-the Planner's hint and the lexical features on every sub-query, so the
-agreement between the hint that was honoured and the rule that would have
-fired can be computed offline, and it would say whether six of the seven rules
-were redundant or merely unreached.
+\textbf{Learned rather than heuristic decisions.} The routing table, the
+rerank gate and the confidence blend are hand-specified functions whose inputs
+are logged on every question. The cheap first step is offline: the trace
+records the Planner's hint and the lexical features on every sub-query, so the
+agreement between the hint that was honoured and the rule that would have fired
+can be computed without a run, and it would say whether six of seven rules are
+redundant or merely unreached.
 
-\textbf{Stronger fact checking.} The Verifier checks whether the final answer
-sentence is entailed by its citations. It does not check intermediate hops, does
-not cross-reference independent sources, and cannot distinguish an unsupported
-claim from one whose support was simply not retrieved. A verifier that
-decomposed the answer into atomic claims, verified each independently, and
-located contradictions between sources would give the re-plan directive far more
-precise information about what to look for next --- and directive quality, not
-the loop's existence, is plausibly what limits its usefulness.
+\textbf{Evaluation on a caching inference server.} The reproducibility finding
+generalises beyond this project. Any evaluation of this size on a local server
+with prefix caching carries a noise floor that seed discipline does not remove,
+and the honest protocol is several executions per configuration with the
+spread reported, not one execution with a seed. That is a half day of compute
+here and it is the first thing a continuation should do.
 
-\textbf{Domain transfer.} The brief suggests legal and biomedical retrieval, and
-each stresses a different part. Biomedical corpora have curated ontologies, so
-the KG Navigator could traverse an authored graph instead of an induced one,
-isolating how much of the graph's value comes from structure rather than from
-the induction procedure. Legal corpora invert the challenge: citation networks
-are explicit and reliable, but passages are long, densely cross-referential, and
-full of terms of art whose meaning is document-specific, testing the
-alias-matching linker to destruction.
+\textbf{Domain transfer.} Biomedical corpora have curated ontologies, so the
+KG Navigator could traverse an authored graph and isolate how much of a graph's
+value comes from structure rather than induction. Legal corpora invert the
+challenge, with explicit citation networks but long, cross-referential
+passages that would test alias linking to destruction.
 
 \section{Toward a Thesis Extension}
 \label{sec:thesis}
 
-Two of the thesis directions in the assignment brief follow from this system
-rather than requiring a new one. Both would also be the natural place to
-introduce the real-time external tools the brief describes and this system
-deliberately omits: the registry accepts a connector as one more entry, and
-the budgeting discipline applied here to model calls is what such a connector
-would need.
-
-The self-reflective fact-checking track is the closer fit. The Verifier already
-scores confidence and triggers further retrieval when it is low, which is the
-mechanism the brief describes; what it lacks is multi-source cross-verification,
-provenance annotation, and calibrated uncertainty reported to the user rather
-than consumed internally. Extending it to a multimodal setting --- validating
-retrieved imagery against textual reports, as the brief's flood-extent example
-illustrates --- needs a cross-modal entailment model in place of the NLI stage,
-but leaves the orchestration, the directive schema, and the anti-loop machinery
-intact.
-
-The agentic query-decomposition track is the other. This Planner decomposes a
-static text corpus into a graph of at most five nodes; the spatio-temporal
-version decomposes over archives indexed by time and location, where sub-queries
-carry temporal extents and dependencies encode change detection between slices.
-The structure --- validated DAG, placeholder substitution, per-node tool
-routing, verification with feedback --- is unchanged; the tool registry and the
-cost model are not. The cost model is where the work sits: when one tool
-invocation is a satellite-imagery request rather than a BM25 query, the
-budgeting discipline applied here to language-model calls becomes the central
-design problem rather than an implementation detail.
+Two of the thesis directions in the brief follow from this system. The
+self-reflective fact-checking track is the closer fit: the Verifier already
+scores confidence and triggers further retrieval when it is low, and what it
+lacks is multi-source cross-verification, provenance annotation and calibrated
+uncertainty reported to the user. A multimodal setting needs a cross-modal
+entailment model in place of the NLI stage and leaves the orchestration
+intact. The query-decomposition track is the other: a spatio-temporal version
+decomposes over archives indexed by time and location with the same validated
+graph and feedback loop, and the cost model becomes the central design problem
+once one tool invocation is a satellite-imagery request rather than a BM25
+query. Both would be the natural place for the real-time external tools the
+brief describes and this system deliberately omits.

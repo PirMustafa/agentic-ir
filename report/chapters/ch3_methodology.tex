@@ -4,500 +4,124 @@
 \section{Classical Foundations}
 \label{sec:classical}
 
-The agentic components described later do not replace classical retrieval; they
-schedule it. Every sub-query the Planner emits is ultimately answered by one of
-the three mechanisms below, so their individual blind spots determine what the
-agent layer has to compensate for.
+The agentic components do not replace classical retrieval; they schedule it.
+Every sub-query the Planner emits is answered by one of the three mechanisms
+below, so their blind spots determine what the agent layer has to compensate
+for.
 
 \subsection{Sparse Retrieval: BM25}
 \label{sec:bm25}
 
-BM25~\cite{robertson2009probabilistic} scores a document $d$ against a query
-$q$ by summing, over the query terms, a saturating function of term frequency
-weighted by inverse document frequency:
+BM25~\cite{robertson2009probabilistic} scores a document against a query by
+summing, over query terms, a saturating function of term frequency weighted by
+inverse document frequency:
 \[
   \mathrm{score}(q,d) \;=\; \sum_{t \in q} \mathrm{IDF}(t)\cdot
   \frac{f(t,d)\,(k_1+1)}
        {f(t,d) + k_1\!\left(1 - b + b\,\dfrac{|d|}{\mathrm{avgdl}}\right)} .
 \]
-The saturation parameter $k_1$ controls how quickly repeated occurrences stop
-adding score; the length normalisation parameter $b$ controls how strongly long
-documents are penalised. The values used here, $k_1 = 0.9$ and $b = 0.4$
-(\texttt{retrieval.sparse}), sit below the classical $1.2$ and $0.75$
-deliberately: the indexed unit is a single Wikipedia lead paragraph averaging
-4.05 sentences and 531.9 characters, not a full document. At that length
-repetition carries little extra evidence and length differences are largely
-incidental, so heavy normalisation would penalise informative paragraphs for
-being informative.
-
-BM25 matches rare surface forms exactly, needs no training, is interpretable
-term by term, and answers in milliseconds. It also supplies the analysed
-lexicon and per-term document frequencies that the routing rules of
-Section~\ref{sec:tools} consume, which nothing else in the system can provide.
-Its weakness is vocabulary mismatch: a query and a relevant passage sharing no
-surface term after stemming score zero against one another, however obviously
-they concern the same thing.
+The values used here, $k_1 = 0.9$ and $b = 0.4$, sit below the classical 1.2
+and 0.75 on purpose: the indexed unit is a single lead paragraph averaging four
+sentences, where repetition carries little extra evidence and length
+differences are incidental. BM25 matches rare surface forms exactly, needs no
+training and answers in milliseconds. Its weakness is vocabulary mismatch: a
+query and a relevant passage sharing no stemmed term score zero against each
+other however obviously they concern the same thing.
 
 \subsection{Dense Retrieval}
 \label{sec:dense}
 
-A dense retriever embeds queries and passages independently into a shared
-vector space and ranks by similarity. This work uses
-\texttt{bge-small-en-v1.5}~\cite{xiao2023cpack}, a 384-dimensional bi-encoder,
-with vectors L2-normalised so that inner product equals cosine similarity, and
-an exact FAISS flat inner-product index. Exact rather than approximate search
-is affordable because the corpora are small --- 66{,}581 and 54{,}957 passages
---- and it matters because any recall the system fails to achieve is then
-attributable to the retrieval method rather than to the data structure. The
-model is used asymmetrically, as its authors intend: passages are encoded bare,
-queries are prefixed with \texttt{"Represent this sentence for searching
-relevant passages: "}.
-
-Its strength is paraphrase, exactly the case BM25 cannot see; its weakness is
-the mirror image. Query and passage never meet, and each is compressed into 384
-dimensions before comparison, a bottleneck that preserves topic far better than
-identity --- so two similarly named people or two films sharing a title are
-liable to be conflated. The two failure modes are close to complementary, which
-is the standing argument for combining them.
+A dense retriever embeds queries and passages independently and ranks by
+similarity. This work uses \texttt{bge-small-en-v1.5}~\cite{xiao2023cpack}, a
+384-dimensional bi-encoder with L2-normalised vectors in an exact FAISS index,
+used asymmetrically as its authors intend. Its strength is paraphrase, exactly
+what BM25 cannot see; its weakness is the mirror image. Query and passage never
+meet, and each is compressed to 384 dimensions before comparison, a bottleneck
+that preserves topic far better than identity, so two similarly named people
+are liable to be conflated. The two failure modes are close to complementary,
+which is the standing argument for combining them.
 
 \subsection{Hybrid Fusion and Reranking}
 \label{sec:hybrid}
 
-The two ranked lists are combined by Reciprocal Rank Fusion
-(RRF)~\cite{cormack2009reciprocal}, which discards the scores and combines
-positions:
+The two lists are combined by reciprocal rank fusion~\cite{cormack2009reciprocal},
+which discards scores and combines positions:
 \[
   \mathrm{RRF}(d) \;=\; \sum_{r \in R} \frac{1}{k + \mathrm{rank}_r(d)},
-  \qquad k = 60 ,
+  \qquad k = 60 .
 \]
-with $k$ from \texttt{retrieval.hybrid.rrf\_k}. Rank-based fusion is preferred
-over score normalisation because BM25 scores are unbounded and depend on corpus
-statistics and query length, while cosine similarities from a normalised
-encoder occupy a narrow band near the top of $[-1,1]$: the two share no scale
-and no principled conversion. Normalisation manufactures one, but the fused
-score then depends on the shape of the candidate list, so a single outlier at
-the tail can reorder the head. Ranks are ordinal and scale-free, and the
-ordinal information is the part on which the two retrievers can meaningfully be
-said to agree.
-
-Fusion improves recall but leaves head precision largely to chance, which is
-what reranking addresses. A cross-encoder --- \texttt{ms-marco-MiniLM-L-6-v2}
-here --- concatenates query and candidate and runs full self-attention over the
-pair, so their terms interact directly. It is more expressive than a bi-encoder
-for the same reason it is more expensive: nothing about the passage can be
-precomputed, so scoring $n$ candidates costs $n$ forward passes and admits no
-index. That cost fixes the depth parameters, \texttt{top\_n} $=50$ before
-reranking and \texttt{top\_k} $=10$ after. Reranking is also often decorative,
-so when the fused top-1 already leads the runner-up by a relative RRF margin of
-at least \texttt{rerank\_margin\_gate} $=0.15$ the fifty forward passes cannot
-change the head of the ranking and are skipped --- a saving counted in the
-trace rather than assumed.
+Rank fusion is preferred over score normalisation because BM25 scores are
+unbounded and corpus-dependent while cosine similarities occupy a narrow band;
+the two share no scale, and a manufactured one makes the fused score depend on
+the shape of the candidate list. Fusion improves recall and leaves head
+precision to chance, which is what reranking addresses. A cross-encoder,
+\texttt{ms-marco-MiniLM-L-6-v2}, runs full attention over each query and
+candidate pair; nothing about the passage can be precomputed, so scoring $n$
+candidates costs $n$ forward passes. That fixes the depths at 50 before
+reranking and 10 after. When the fused top result already leads the runner-up
+by a relative margin of 0.15 the fifty passes cannot change the head and are
+skipped, a saving counted in the trace rather than assumed.
 
 \section{Why Single-Shot Retrieval Fails on Multi-Hop Needs}
 \label{sec:singleshot}
 
-Everything in Section~\ref{sec:classical}, up to and including the
-cross-encoder, computes a scoring function $s(q, d)$. The three methods differ
-enormously in expressive power --- from a bag-of-words sum, through a
-384-dimensional dot product, to full cross-attention over the pair --- but they
-do not differ in their arguments. All of them assume that the relevance of a
-document is determinable from the query and that document. For a large class of
-information needs this assumption is correct and unremarkable. For a bridge
-question it is false, and the consequence is not that these systems perform
-poorly but that they are solving the wrong problem.
+Everything above computes a scoring function $s(q, d)$. The three methods
+differ enormously in expressive power but not in their arguments: all assume
+that the relevance of a document is determinable from the query and that
+document. For a bridge question the assumption is false, and the consequence is
+not that these systems perform poorly but that they solve the wrong problem.
 
-\paragraph{A worked example.} Consider question
-\texttt{5a7793275542992a6e59df04}, drawn from the HotpotQA evaluation sample of
-Section~\ref{sec:sampling}:
+Consider question \texttt{5a7793275542992a6e59df04} from the evaluation
+sample: \emph{Which country is the firm that owns Babycham located?} The gold
+answer is Australia, and the two gold sentences open the passages
+\textbf{Babycham} (``\ldots the name is now owned by Accolade Wines'') and
+\textbf{Accolade Wines} (``\ldots headquarters in South Australia''). The
+first hop flatters BM25: Babycham is a near-unique term in a 66{,}581-passage
+corpus, and lexical matching alone puts the passage at rank one. The second hop
+is not merely harder. Of the query terms, not one occurs in the second gold
+sentence. BM25 has nothing to match. A bi-encoder produces a non-zero
+similarity, but the query embedding is dominated by Babycham and a possessive
+relation while the passage says wine business, global, South Australia, and
+nothing distinguishes it from the corpus's other company profiles.
 
-\begin{quote}
-\emph{Which country is the firm that owns Babycham located?}
-\end{quote}
+The reranker does not close the gap, for a reason that survives any pool width
+and any model size. Place the Accolade Wines passage in the pool by fiat and
+give the cross-encoder unlimited capacity. The information that would justify
+a high score, that Accolade Wines owns Babycham, is present in neither element
+of the pair it is shown; it is asserted in a third document. The relevance of
+the second-hop passage is a conditional quantity
+$\mathrm{rel}(q, d_2 \mid d_1)$ depending on a document the ranker was never
+given, and more capacity changes the function class, not the arguments. The
+query that retrieves Accolade Wines trivially is ``Where is Accolade Wines
+located?'', and it cannot be written in advance because that string exists
+only as the output of the first retrieval. The missing capability is a control
+structure, not a scoring function.
 
-\noindent
-The gold answer is \emph{Australia}, and the two gold supporting facts are the
-opening sentences of two passages:
-
-\begin{quote}
-\textbf{Babycham}, sentence 0 --- ``Babycham is the trade name of a light,
-sparkling perry invented by Francis Showering, a brewer in Shepton Mallet in
-Somerset, England; the name is now owned by Accolade Wines.''
-
-\textbf{Accolade Wines}, sentence 0 --- ``Accolade Wines is a major global wine
-business with headquarters in South Australia.''
-\end{quote}
-
-The first hop is easy, and easy in a way that flatters BM25 specifically:
-``Babycham'' is a near-unique term in a 66{,}581-passage corpus, so lexical
-matching on that term alone puts the correct passage at rank one. This is
-precisely the situation routing rule R4 of Section~\ref{sec:tools} exists to
-detect --- though, as that section records, in the evaluated runs the
-Planner's own tool hint settled every routing before R4 could be consulted.
-
-The second hop is not merely harder. Compare the query terms ---
-\emph{country}, \emph{firm}, \emph{owns}, \emph{Babycham}, \emph{located} ---
-against the second gold sentence. Not one of them occurs in it. BM25 has
-nothing to match and assigns no score on any discriminative term. A bi-encoder
-produces a non-zero similarity, but the query embedding is dominated by
-\emph{Babycham} and a possessive relation, while the passage embedding says
-\emph{wine business}, \emph{global}, \emph{South Australia}. The passage sits
-among the corpus's other company profiles, and nothing in it distinguishes it
-from any of them with respect to this query.
-
-\paragraph{Why the reranker does not close the gap.} There are two reasons, and
-only the second is fundamental. The first is mechanical: a cross-encoder
-reorders a pool it is handed, so a passage that never enters the pool cannot be
-recovered by reordering, and widening the pool postpones the problem rather
-than solving it.
-
-The second reason survives any pool width and any model capacity. Suppose the
-\emph{Accolade Wines} passage is placed in the pool by fiat, and suppose the
-cross-encoder is arbitrarily large and perfectly trained. It is presented with
-the pair (question, passage) and asked to judge relevance. The information that
-would justify a high score --- that Accolade Wines is the firm that owns
-Babycham --- is present in neither element of that pair. It is asserted in a
-third document. The relevance of the second-hop passage $d_2$ therefore does
-not factorise as a function of the query--document pair; it is a conditional
-quantity $\mathrm{rel}(q, d_2 \mid d_1)$ depending on a document the ranker was
-never given. Increasing model capacity changes the function class being
-searched, not the arguments the function receives, so a better ranker is a
-better approximation of the wrong quantity. This is why the failure is properly
-described as a specification error rather than a ranking error, and it is the
-single fact from which the rest of this chapter follows.
-
-\paragraph{What would work.} The query that retrieves \emph{Accolade Wines}
-trivially is ``Where is Accolade Wines located?'' --- a query with the same
-rare-key property that made the first hop easy. It cannot be written in
-advance, because the string ``Accolade Wines'' appears nowhere in the user's
-question; it exists only as the output of the first retrieval. The missing
-capability is therefore not ranking quality but the ability to issue a second
-query whose text is conditioned on the result of the first. That is a control
-structure, not a scoring function, and no single-shot architecture can express
-it however good its scorer is.
-
-\paragraph{Scope of the argument.} This failure mode is not an edge case.
-Bridge questions are 5{,}918 of HotpotQA's 7{,}405 validation questions, or
-79.9\%, and 2Wiki's compositional, inference and bridge-comparison types ---
-9{,}536 of 12{,}576 questions --- share the same conditional structure.
-Comparison questions fail differently, and the distinction is worth stating
-rather than blurring: there both gold passages are individually retrievable
-from the original query, since both entities are named in it, so the difficulty
-is coverage at a fixed cut-off plus the fact that the answer is the output of
-an \emph{operation} over two passages rather than the content of either. That
-is a weaker claim, and Section~\ref{sec:decomposition} accordingly gives the
-two shapes different plan topologies. How far the single-shot baselines fall
-below the achievable ceiling is a measurement, reported in
-Chapter~\ref{ch:implementation}; the point here is that the ceiling exists by
-construction and cannot be lifted by tuning.
+This is not an edge case. Bridge questions are 5{,}918 of HotpotQA's 7{,}405,
+and 2Wiki's compositional, inference and bridge-comparison types, 9{,}536 of
+12{,}576 questions, share the conditional structure. Comparison questions fail
+differently: both entities are named in the question, so both passages are
+individually retrievable, and the difficulty is coverage at a fixed cut-off
+plus the fact that the answer is an operation over two passages rather than
+the content of either. Section~\ref{sec:decomposition} gives the two shapes
+different plan topologies accordingly.
 
 \section{Agentic Retrieval}
 \label{sec:agentic}
 
-The remedy indicated above is a retrieval process that carries state between
-rounds. That is the common thread through the agentic IR literature: treating a
-language model as an autonomous agent that plans, invokes tools and
-revises~\cite{zhang2024aiagent,wu2025agentic}, whether the domain is scientific
+Figure~\ref{fig:architecture} shows the system this section builds up to.
+The remedy is a retrieval process that carries state between rounds, which is
+the thread through the agentic IR literature: a model that plans, invokes tools
+and revises~\cite{zhang2024aiagent,wu2025agentic}, whether over scientific
 literature~\cite{lala2023paperqa}, multimodal
 collections~\cite{schneider2025collex}, telecommunications
 networks~\cite{zhang2025toward} or geospatial
-workflows~\cite{lee2025multiagent}. The four agents below cover, between them,
-the five tasks of the assignment brief's Table~1.
+workflows~\cite{lee2025multiagent}. The four agents below cover the five tasks
+of the brief's Table~1.
 
-\subsection{Query Decomposition and Refinement}
-\label{sec:decomposition}
-
-The Planner converts a question into a directed acyclic graph of at most five
-sub-queries. Each node carries its own text, an explicit dependency list, an
-intent and an expected answer type, and may contain template placeholders of
-the form \texttt{\{\{q1.answer\}\}}, \texttt{\{\{q1.entity\}\}} or
-\texttt{\{\{q1.title\}\}}. Execution proceeds in level-synchronous topological
-order, and a node's placeholders are substituted from the state of its
-dependencies immediately before it is routed and retrieved. The second-hop
-query is therefore a genuinely different string at retrieval time from the one
-the Planner emitted --- exactly the capability Section~\ref{sec:singleshot}
-identifies as missing --- and because the resolved text differs lexically from
-the template, routing is recomputed after substitution rather than inherited.
-
-This is the same territory as Self-Ask~\cite{press2023selfask}, which
-interleaves follow-up questions inside a single generation, and
-IRCoT~\cite{trivedi2023interleaving}, which interleaves retrieval with
-chain-of-thought steps. Four differences matter. The plan here is an explicit,
-validated data structure rather than a decoding trajectory: cycles, dangling
-dependencies, over-long plans and unbound placeholders are repaired
-mechanically before execution and every repair is recorded, so a
-model-generated plan is never executed on trust. It is a graph rather than a
-chain, so a comparison question yields two independent roots retrieved in the
-same level where a linear follow-up mechanism must serialise them. Query
-expansion rides inside the same planner response as a per-node list of at most
-two rewrites, fused with RRF at retrieval time, so expansion costs \emph{zero}
-additional model calls. And the plan can be revised on evidence supplied by a
-downstream agent (Section~\ref{sec:verification}), which no single-pass
-decoding trajectory can do.
-
-Two Planner decisions followed from measurement. The plan's \texttt{strategy}
-label is derived from the shape of the validated graph and overwrites whatever
-the model reported: on eight representative questions at temperature 0 with a
-constrained schema, \texttt{qwen3:8b} produced structurally correct
-decompositions 8 times out of 8 but labelled the strategy \texttt{single\_hop}
-in 7 of those 8, including unambiguous bridge and comparison cases. It builds
-the graph well and names it badly, and since that label gates a deterministic
-comparison shortcut, trusting it would silently disable one; both labels are
-logged, so their disagreement rate is itself a reportable result about the
-self-knowledge of a small local model. Separately, the model reliably emits a
-final \emph{combiner} node restating the question and depending on every other
-node, whose answer comes from composing its dependencies rather than from any
-passage; detecting and skipping it removes a third of all retrieval on a
-three-node comparison plan.
-
-The Planner degrades along a deterministic ladder rather than failing: a
-comparison template, then a two-node bridge template, then an identity plan
-routed to hybrid search with reranking. It is tempting to describe that floor
-as the \texttt{hybrid\_rerank} baseline, and an earlier draft of this report
-did; the description is wrong, and the ablation grid of
-Chapter~\ref{ch:implementation} is what shows it to be wrong. An identity plan
-still passes through synthesis and verification, so the system with the
-Planner removed is a one-node agentic system that answers, cites, and can
-still re-plan --- not a ranker. What the ladder guarantees is narrower and
-still worth having: retrieval itself can never be worse than a single hybrid
-query with reranking, so a retrieval deficit against that baseline is a
-judgement about what the Planner chose to ask, never an infrastructure failure.
-
-\subsection{Tool-Augmented Retrieval}
-\label{sec:tools}
-
-Tools are declared in a registry as a name, a callable, an argument schema and
-a natural-language description. Seven are exposed across two families:
-\texttt{bm25\_search}, \texttt{dense\_search}, \texttt{hybrid\_search} and
-\texttt{rerank} over the indexes, and \texttt{kg\_link}, \texttt{kg\_neighbors}
-and \texttt{kg\_path} over the entity graph. The same description strings that
-document a tool to a human are the strings injected into the tool-selection
-prompt, so model-facing documentation and executable registry cannot drift
-apart --- a small property that removes an entire class of silent bug in which
-an agent is told about a tool that no longer behaves as described.
-
-Selection among the retrieval tools is a seven-rule decision table over
-features of the resolved sub-query: token count after stopword removal,
-presence of a quoted span, number and token share of capitalised runs,
-out-of-vocabulary rate against the BM25 lexicon, minimum document frequency
-among content terms, and whether the node has dependencies. The rules encode
-Section~\ref{sec:classical} directly. A planner hint is honoured (R1); an
-out-of-vocabulary rate above 0.34 routes to dense search (R2), because BM25
-cannot score terms absent from its lexicon; short quoted or proper-noun-dense
-queries (R3) and queries containing a term of document frequency three or fewer
-(R4) route to BM25, a very rare term being a near-unique key --- the Babycham
-case above; dependent nodes (R5) and long or entity-free queries (R6) route to
-hybrid, since a bridge-filled query mixes one precise entity with paraphrased
-relation text and neither channel alone suffices; and a default row (R7) makes
-the table total.
-
-One fact about the table has to be stated before its cost is argued for,
-because it changes what the argument is about. Rule R1 honours a tool hint the
-Planner may attach to a sub-query, and the decision-table is evaluated first
-match wins. In the headline HotpotQA run the Planner attached a hint to every
-one of the 854 sub-queries it emitted, so R1 fired on all 575 routing
-decisions the trace records and rules R2--R7 never executed once. All seven
-rules are implemented and unit-tested; on this data six of them are dead code.
-That is not a defect in the rules but a finding about the division of labour
-between the two agents: the schema-constrained planning call, which the system
-pays for anyway, already carries a per-node tool choice, and the lexical
-features the remaining rules consult were never needed to decide anything. The
-cost argument below therefore describes a one-rule router in practice, and the
-saving it claims is the saving of not asking the model a second time for a
-decision it made in its first call. Whether the model's hints agree with what
-the lexical rules would have chosen is a measurable question and is recorded
-as an open one in Chapter~\ref{ch:implementation}.
-
-The table costs zero model calls, and that deserves stating as an argument
-rather than as an optimisation. An agent that spends a language-model call on a
-decision a rule already settles is spending the user's latency budget, not
-demonstrating intelligence. At the measured 52 tokens per second a
-schema-constrained call costs roughly 3.75\,s, whereas the routing rule is a
-handful of look-ups against an already-loaded lexicon; multiplied across
-sub-queries, 250 questions, two datasets and nine configurations, that is hours
-of wall clock purchased for a decision the default row would often have made
-identically. Autonomy is a property of which decisions a system makes without a
-human, not of which decisions it routes through a transformer.
-
-\begin{sloppypar}
-The claim is nonetheless empirical, and the experiment that would test it was
-designed but has not been run. The design was to clear the retriever's
-\texttt{heuristic\_shortcut} flag, which routes every sub-query through a
-tool-selection prompt instead of the table, run that configuration on the
-disjoint 50-question calibration slice, and report the rule--model agreement
-rate, the change in nDCG@10 and the change in wall clock. No such run exists
-under \texttt{results/}, so no agreement rate is reported anywhere in this
-document. There is also a reason the experiment cannot be run as the code
-stands: the retriever consults the planner hint before it consults the flag,
-so a sub-query carrying a hint is routed by R1 whether or not the shortcut is
-enabled, and with a hint on every sub-query the selection prompt is
-unreachable. Making the model router reachable requires suppressing the
-Planner's hints as well, which is a different experiment from the one designed
-and one that would test the lexical rules R2--R7 rather than the router the
-system actually used. The paragraph above is therefore a design argument, not
-a measured result, and Chapter~\ref{ch:implementation} says so again where the
-cost figures are reported.
-\end{sloppypar}
-
-This is also where reinforcement learning would enter, and why it does not
-enter here. Tool routing is a policy over a small discrete action space with an
-observable reward, which is textbook territory for a contextual bandit or a
-policy-gradient learner. The obstacle is specific and measurable: the reward
-would have to derive from gold supporting facts, and the only data carrying
-those labels is the evaluation data, so an on-policy learner would be training
-on the test set and any gain would be uninterpretable. The one leakage-free
-signal available is the 50-question calibration slice, far too small to fit a
-policy that reliably beats a seven-rule table. Reinforcement learning is
-therefore listed as future work in Chapter~\ref{ch:conclusions} rather than
-claimed here.
-
-\subsection{Knowledge Graph Traversal}
-\label{sec:kg-traversal}
-
-The KG Navigator operates on the entity graph built in
-Section~\ref{sec:preprocessing}. Entity linking is an alias-trie longest match
-over normalised titles and costs no model call. Traversal is bounded at two
-hops and twenty-five neighbours per node (\texttt{agents.kg.max\_hops},
-\texttt{max\_neighbors}) and expanded in deterministic order of descending edge
-weight, so a repeated run explores the graph in exactly the same sequence.
-
-The highest-value operation is bidirectional breadth-first search: given two or
-more linked seeds it expands from each and reports the meeting node as the
-\emph{bridge entity}. Applied to the example of Section~\ref{sec:singleshot},
-the alias ``Accolade Wines'' occurring in the text of the \emph{Babycham}
-passage is an edge in the graph by construction, so the bridge entity that the
-retrieval stack could not surface by ranking is recovered by a graph walk in
-milliseconds, and recovered without a generation step where an equivalent model
-call would cost seconds. This is the concrete sense in which graph traversal is
-not decorative: it is a second, structurally different mechanism for the one
-operation single-shot retrieval provably cannot perform.
-
-Traversal is also the most explainable component, because the path \emph{is}
-the explanation. Every edge stores the document identifier, the sentence
-identifier and the sentence asserting it, so a traversal result enters the
-evidence pool at the same sentence granularity as a retrieved passage, is cited
-in the same way, and is scored by the same supporting-fact metrics; a graph
-result that could not be cited would be unfalsifiable. The limits should be
-equally clear: the graph is induced from mention co-occurrence, not curated
-from an ontology, and 23.2\% of HotpotQA edges and 21.0\% of 2Wiki edges carry
-no label beyond \texttt{mentions}, so relation semantics are weak and the
-structure is best understood as a navigation aid rather than a knowledge base.
-Comparison questions are handled accordingly: with two seeds and no path
-expected, each seed's attribute-bearing sentences are returned instead of
-forcing a spurious connection, and an empty result is a legal outcome.
-
-\subsection{Self-Reflective Validation}
-\label{sec:verification}
-
-The Verifier receives the Synthesizer's answer with the evidence pool and
-decides whether it is supported. Cited identifiers that do not exist are
-recorded as hallucinated citations and contribute no support, which alone
-catches a common failure of small local models. A natural language inference
-model, \texttt{cross-encoder/nli-deberta-v3-base}, is then run with each cited
-sentence as premise and the answer sentence as hypothesis, and the maximum
-probability of entailment becomes the NLI support; the Synthesizer emits that
-answer sentence as a separate field precisely so the hypothesis is a
-well-formed declarative sentence, which is what an NLI model is trained on,
-rather than the usual concatenation of question and answer. Two further signals
-are computed --- citation grounding, the fraction of claims with at least one
-valid supporting citation, and retrieval agreement, the fraction of executed
-sub-queries whose top-ranked title appears among the cited evidence --- and the
-four combine as
-\[
-  \mathrm{conf} = 0.45\,\mathrm{nli} + 0.25\,\mathrm{citation}
-                + 0.15\,\mathrm{retrieval} + 0.15\,\mathrm{llm},
-\]
-with weights from \texttt{agents.verifier.weights}, renormalised when the model
-term is absent.
-
-That last term is gated: the adjudication call is issued only when the
-confidence computed without it falls inside $[0.40, 0.70]$, the threshold of
-0.55 plus or minus an uncertainty band of 0.15, because confident acceptances
-and confident rejections cannot have their verdict changed by it. Above the
-threshold the verdict is \texttt{accept}. Below it, with re-plans remaining,
-the verdict is \texttt{revise} and the Verifier emits a re-plan directive
-carrying what could not be established, which sub-queries returned nothing
-useful, which entities are already covered, and --- the field that makes the
-loop work at all --- the normalised texts of every sub-query already tried.
-Without that ban list, an 8B model told only that its previous attempt was
-insufficient reliably re-emits the same decomposition and burns both re-plans
-for nothing. Below the threshold with no re-plans left the verdict is
-\texttt{abstain}, a label rather than a refusal: the best candidate is still
-returned, so answer metrics remain computable.
-
-A verifier can be wrong in two directions and the design has to survive both.
-Too strict, it triggers re-planning that costs latency and risks replacing a
-good answer with a worse one; too lenient, it rubber-stamps errors while
-reporting high confidence. Answer selection at termination is therefore the
-argument maximising confidence over \emph{all} cycles, ties broken toward the
-earlier and cheaper answer, so a bad re-plan cannot silently overwrite a good
-first attempt; and the error taxonomy of Chapter~\ref{ch:implementation}
-contains explicit \texttt{verifier\_false\_accept} and
-\texttt{verifier\_false\_reject} categories, computed post hoc against gold
-supporting facts, so the loop is falsifiable rather than merely asserted. The
-threshold of 0.55 was set a priori. The design called for it to be swept on
-the disjoint calibration slice of Section~\ref{sec:sampling} and frozen before
-the evaluation run, because it controls the re-plan rate and tuning it on the
-evaluation set would corrupt one of the headline agent metrics; what was
-actually done is a post-hoc sweep over that slice, reading confidences that a
-single run at 0.55 had already produced, and Chapter~\ref{ch:conclusions}
-reports both what that sweep found and why it is not the experiment the
-design specified.
-
-\section{The Role of the Language Model}
-\label{sec:llm-role}
-
-The language model is the component that generalises, and everything else in
-this system exists to keep the number of calls small and their inputs short.
-Three decisions genuinely require it: mapping an unseen compound question onto
-a dependency structure, which is open-ended and cannot be enumerated by rules;
-composing a short answer span from heterogeneous evidence sentences, which
-requires reading; and adjudicating the narrow band where the numeric confidence
-signals disagree, which requires judgement arithmetic does not supply.
-Everything else is deterministic --- tool routing, entity linking, graph
-traversal, entailment, evidence deduplication and ranking, comparison
-arithmetic over parsed dates and numbers, and query expansion, which rides
-inside the planner call. Each is a decision over a small closed action space
-with a cheap and reliable feature, where a model call would add latency and a
-new failure mode, malformed output, without adding accuracy. The worst case
-over a whole question is therefore 15 calls against a cap of 20, with 4--7
-typical, and two are reserved so synthesis and verification always run even
-when the Planner has exhausted the budget.
-
-Serving that model locally shaped the design more than any other single factor,
-and Chapter~\ref{ch:implementation} gives the full configuration. Two
-consequences belong here because they changed the method rather than the
-deployment. Throughput of 52 tokens per second makes prompt length a latency
-cost, which is why the re-plan prompt passes retrieved \emph{titles} rather
-than retrieved text, holding it to a few hundred tokens instead of several
-thousand. And \texttt{qwen3} is a hybrid reasoning model that emits a
-\texttt{<think>} block by default, whose measured effect is worse than added
-latency: with thinking enabled and a 128-token prediction budget, the model
-spent the \emph{entire} budget on a 503-character reasoning block and produced
-no answer at all. Thinking does not merely delay the response, it starves it,
-so suppression is applied three ways and whatever leaks through is logged.
-Structured output is parsed down a five-rung ladder ending in a repair prompt,
-and parse failures are counted per agent --- because if the Planner's rate is
-high, what the results measure is partly the fallback ladder rather than the
-model, and the report has to say so.
-
-\section{Architectural Summary}
-\label{sec:arch-summary}
-
-Figure~\ref{fig:architecture} shows the resulting system. Read left to right it
-is a pipeline: a Planner decomposes, a Retrieval Agent routes each sub-query to
-the indexes, a KG Navigator recovers bridge entities from the entity graph, a
-Synthesizer composes a cited answer, and a Verifier scores it. The edge that
-makes it an agent rather than a pipeline is the dashed one drawn above: below a
-confidence of 0.55 the Verifier returns a re-plan directive to the Planner
-instead of returning an answer, and the system tries again with an explicit
-record of what it already knows and what it must not repeat. Every other
-component in this chapter is standard IR machinery arranged carefully; that
-backward edge is the contribution, and Chapter~\ref{ch:implementation} isolates
-its effect by ablation rather than assuming it.
-
-\begin{figure}[htbp]
+\begin{figure}[!t]
   \centering
-  \resizebox{\textwidth}{!}{%
+  \resizebox{0.78\textwidth}{!}{%
   \begin{tikzpicture}[
     font=\small,
     box/.style={draw, rounded corners=2pt, minimum height=9mm,
@@ -529,23 +153,162 @@ its effect by ablation rather than assuming it.
 
     \draw[back] (ver.north) .. controls +(0,18mm) and +(0,18mm) ..
       node[above, font=\scriptsize]
-      {\textbf{ReplanDirective} --- confidence $<0.55$} (plan.north);
+      {\textbf{ReplanDirective}, confidence $<0.55$} (plan.north);
   \end{tikzpicture}}
   \caption{The four-agent architecture. Solid arrows are the forward retrieval
-  path; dashed boxes are offline artefacts built in
-  Section~\ref{sec:preprocessing}. The dashed backward edge is the
-  Verifier-to-Planner feedback loop --- the only information that flows against
-  the pipeline, and what distinguishes this system from a retrieval-augmented
-  generation pipeline.}
+  path; dashed boxes are offline artefacts. The dashed backward edge is the
+  Verifier-to-Planner feedback loop, the only information that flows against
+  the pipeline.}
   \label{fig:architecture}
 \end{figure}
 
-Mapped onto the assignment brief's Table~1, the Planner covers autonomous query
-refinement and multi-step retrieval planning, the tool registry and routing
-table cover tool-augmented retrieval, the KG Navigator covers knowledge graph
-traversal, and the Verifier covers self-reflective validation and fact
-checking; Table~\ref{tab:task-mapping} in Chapter~\ref{ch:introduction} gives
-the mapping row by row with the sections that specify and measure each. Five
-tasks are addressed by four agents because refinement and planning are the
-same act performed at different points in the loop: once before evidence
-exists, and again after the Verifier has said what is missing.
+\subsection{Query Decomposition and Refinement}
+\label{sec:decomposition}
+
+The Planner converts a question into a directed acyclic graph of at most five
+sub-queries. Each node carries its text, a dependency list, an intent and an
+expected answer type, and may contain placeholders such as
+\texttt{\{\{q1.answer\}\}}. Execution proceeds in topological order, and a
+node's placeholders are substituted from its dependencies immediately before it
+is routed, so the second-hop query is a genuinely different string at
+retrieval time from the one the Planner emitted. This is the territory of
+Self-Ask~\cite{press2023selfask} and IRCoT~\cite{trivedi2023interleaving},
+with four differences. The plan is a validated data structure rather than a
+decoding trajectory, and every mechanical repair is recorded. It is a graph,
+so a comparison question yields two independent roots retrieved together.
+Query expansion rides inside the same planner response, so it costs no
+additional call. And the plan can be revised on evidence from a downstream
+agent, which no single-pass trajectory can do.
+
+Two decisions followed from measurement. The plan's \texttt{strategy} label is
+derived from the shape of the validated graph and overwrites what the model
+reported: on eight representative questions the model produced structurally
+correct decompositions 8 times out of 8 and labelled the strategy
+\texttt{single\_hop} in 7 of them. It builds the graph well and names it badly.
+Separately, the model reliably emits a final combiner node restating the
+question and depending on every other node; detecting and skipping it removes
+a third of all retrieval on a three-node comparison plan.
+
+The Planner degrades along a deterministic ladder rather than failing: a
+comparison template, then a two-node bridge template, then an identity plan
+routed to hybrid search with reranking. That floor is not the
+\texttt{hybrid\_rerank} baseline, and the ablation grid of
+Chapter~\ref{ch:implementation} shows why the distinction matters: an identity
+plan still passes through synthesis and verification, so the system with the
+Planner removed is a one-node agentic system that answers and cites, not a
+ranker.
+
+\subsection{Tool-Augmented Retrieval}
+\label{sec:tools}
+
+Seven tools are declared in a registry, four over the indexes and three over
+the entity graph, and the description that documents each to a human is the
+string injected into the selection prompt, so documentation and registry
+cannot drift apart.
+
+Selection among the retrieval tools is a seven-rule decision table over
+features of the resolved sub-query: token count, quoted spans, capitalised
+runs, out-of-vocabulary rate against the BM25 lexicon, minimum document
+frequency among content terms, and whether the node has dependencies. A
+planner hint is honoured first (R1); an out-of-vocabulary rate above 0.34
+routes to dense search (R2); short quoted or proper-noun-dense queries (R3) and
+queries containing a term of document frequency three or fewer (R4) route to
+BM25, the Babycham case; dependent nodes (R5) and long or entity-free queries
+(R6) route to hybrid; and a default row (R7) makes the table total.
+
+One fact about the table changes what the argument is about. In the headline
+HotpotQA run the Planner attached a hint to every one of the 854 sub-queries it
+emitted, so R1 fired on all 575 routing decisions and R2 through R7 never
+executed. All seven rules are implemented and tested; on this data six are
+dead code. The planning call the system pays for anyway already carries a
+per-node tool choice, and the table's contribution was to avoid asking the
+model twice. The saving is real, but the claim that lexical rules decide as a
+model would have decided is untested. Reinforcement learning would enter here
+and does not, because the only reward derives from gold supporting facts that
+exist solely in the evaluation data.
+
+\subsection{Knowledge Graph Traversal}
+\label{sec:kg-traversal}
+
+The KG Navigator operates on the entity graph of
+Section~\ref{sec:preprocessing}. Linking is an alias-trie longest match and
+costs no model call. Traversal is bounded at two hops and twenty-five
+neighbours, expanded in deterministic order of descending edge weight. The
+highest-value operation is bidirectional breadth-first search: given two or
+more linked seeds it expands from each and reports the meeting node as the
+bridge entity. Applied to the Babycham example, the alias Accolade Wines
+occurring in the Babycham passage is an edge by construction, so the bridge
+entity the retrieval stack cannot surface by ranking is recovered by a graph
+walk in milliseconds. This is the concrete sense in which traversal is not
+decorative: it is a second, structurally different mechanism for the one
+operation single-shot retrieval provably cannot perform.
+
+Traversal is also the most explainable component, because the path is the
+explanation: every edge stores the sentence asserting it, so a traversal
+result is scored by the same metrics as a retrieved passage. The limits are
+equally clear. The graph is induced from mention co-occurrence, and 23.2\% of
+HotpotQA edges and 21.0\% of 2Wiki edges carry no label beyond
+\texttt{mentions}, so it is a navigation aid rather than a knowledge base.
+
+\subsection{Self-Reflective Validation}
+\label{sec:verification}
+
+The Verifier receives the Synthesizer's answer with the evidence pool and
+decides whether it is supported. Cited identifiers that do not exist are
+recorded as hallucinated citations and contribute no support. A natural
+language inference model, \texttt{cross-encoder/nli-deberta-v3-base}, is run
+with each cited sentence as premise and the answer sentence as hypothesis; the
+Synthesizer emits that sentence as a separate field precisely so the hypothesis
+is a well-formed declarative sentence. Two further signals are computed,
+citation grounding and retrieval agreement, and the four combine as
+\[
+  \mathrm{conf} = 0.45\,\mathrm{nli} + 0.25\,\mathrm{citation}
+                + 0.15\,\mathrm{retrieval} + 0.15\,\mathrm{llm},
+\]
+renormalised when the model term is absent. That term is gated: the
+adjudication call is issued only when the confidence computed without it falls
+inside $[0.40, 0.70]$, since confident acceptances and rejections cannot have
+their verdict changed by it.
+
+Above the threshold of 0.55 the verdict is accept. Below it, with re-plans
+remaining, the Verifier emits a directive carrying what could not be
+established, which sub-queries returned nothing useful, and the normalised
+text of every sub-query already tried. Without that ban list an 8B model told
+only that its previous attempt was insufficient reliably re-emits the same
+decomposition and burns both re-plans for nothing. Below the threshold with no
+re-plans left the verdict is abstain, a label rather than a refusal: the best
+candidate is still returned. Answer selection at termination is the argument
+maximising confidence over all cycles, ties broken toward the earlier answer,
+so a bad re-plan cannot silently overwrite a good first attempt, and the error
+taxonomy of Chapter~\ref{ch:implementation} contains explicit false-accept and
+false-reject categories so the loop is falsifiable.
+
+\section{The Role of the Language Model}
+\label{sec:llm-role}
+
+The language model is the component that generalises, and everything else
+exists to keep the number of calls small. Three decisions genuinely require it:
+mapping an unseen compound question onto a dependency structure, composing a
+short answer from heterogeneous evidence, and adjudicating the narrow band
+where the numeric signals disagree. Everything else is deterministic. The
+worst case over a question is 15 calls against a cap of 20, with four to seven
+typical, and two calls are reserved so synthesis and verification always run.
+
+Serving the model locally shaped the method, not only the deployment. Prompt
+length is a latency cost, which is why the re-plan prompt passes retrieved
+titles rather than text. And \texttt{qwen3} is a hybrid reasoning model that
+emits a \texttt{<think>} block by default: with thinking enabled and a
+128-token cap it spent the entire budget on a 503-character reasoning block
+and produced no answer at all. At that budget thinking starves the response,
+so it is suppressed for the evaluated grid, and Section~\ref{sec:improvement}
+reports what happens when it is switched back on for one agent with a budget
+large enough to hold it.
+
+\section{Architectural Summary}
+\label{sec:arch-summary}
+
+Read left to right, Figure~\ref{fig:architecture} is a pipeline; the dashed
+edge, along which the Verifier returns a directive to the Planner below a
+confidence of 0.55, is what makes it an agent. Every other component is
+standard machinery arranged carefully, and Chapter~\ref{ch:implementation}
+isolates that edge's effect by ablation.
