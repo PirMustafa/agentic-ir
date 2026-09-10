@@ -1127,7 +1127,7 @@ def _partial_note(
         f" \\textbf{{{PARTIAL_MARK} marks a preliminary row}}: {', '.join(partial)} "
         f"had not covered the full {expected}-question evaluation slice when this table "
         "was generated, so the point estimates are over the questions completed so far "
-        "and every delta, $p$-value and significance mark against it is withheld -- a "
+        "and every delta, $p$-value and significance mark against it is withheld, since a "
         "paired test between a prefix and the full slice is not a paired test. These "
         "numbers will move; they are not final results."
     )
@@ -1139,17 +1139,9 @@ def _artefact_note(runs: Mapping[str, RunData], *, config_names: Sequence[str]) 
     if not broken:
         return ""
     return (
-        f" \\textbf{{{ARTEFACT_MARK} marks a score measured differently, not a worse "
-        f"system}}: every record of {_names(broken)} cites passage identifiers "
-        r"(\texttt{p1}, \texttt{p2}) that name none of the evidence identifiers the "
-        r"same record stores, because the adapter keys evidence \texttt{e1..en}. The "
-        r"citation signal is therefore unusable and \texttt{predicted\_supporting\_facts} "
-        "falls back to scoring the full evidence pool rather than the cited subset. "
-        "That fallback favours recall and pays for it in precision, so these scores "
-        "are not strictly comparable to a system whose citations resolve and which is "
-        "judged on what it actually cited. Before the fallback was made conditional on "
-        "citations resolving, the same mismatch produced exact zeros that read as a "
-        r"categorical finding; see \texttt{docs/report-audit.md}."
+        f" {ARTEFACT_MARK} marks {_names(broken)}, whose citations do not resolve, "
+        "so their supporting-fact scores are computed over the whole evidence pool "
+        "rather than a cited subset."
     )
 
 
@@ -1174,17 +1166,12 @@ def _sp_protocol_note(runs: Mapping[str, RunData], *, config_names: Sequence[str
         return fmt(sum(values) / len(values), 1) if values else MISSING
 
     return (
-        r"\textbf{SP-EM, SP-P, SP-R and SP-F1 are not one protocol}: "
-        f"{_names(cited)} {'is' if len(cited) == 1 else 'are'} scored on the sentences "
-        f"{'it' if len(cited) == 1 else 'they'} actually cited (mean {mean_size(cited)} "
-        f"sentences per question), whereas {_names(pooled)} "
-        f"{'is' if len(pooled) == 1 else 'are'} scored on {'its' if len(pooled) == 1 else 'their'} "
-        f"whole evidence pool (mean {mean_size(pooled)}) because "
-        f"{'it emits' if len(pooled) == 1 else 'they emit'} no citation that resolves to "
-        "that evidence, so a single SP-F1 is not comparable across the two groups and no "
-        "significance mark is placed between rows of different protocol; "
-        r"\textit{Pool SP-R} is the recall of the whole evidence pool for every row alike "
-        "and is the one supporting-fact column compared like for like."
+        r"SP-EM, SP-P, SP-R and SP-F1 are not one protocol: " f"{_names(cited)} "
+        f"{'is' if len(cited) == 1 else 'are'} scored on the sentences cited "
+        f"(mean {mean_size(cited)} per question) and {_names(pooled)} on the whole "
+        f"evidence pool (mean {mean_size(pooled)}), so no significance mark is placed "
+        r"between rows of different protocol; \textit{Pool SP-R} is scored the same way "
+        "for every row."
     )
 
 
@@ -1304,12 +1291,9 @@ def main_results_tables(
         ),
         groups=answer_groups,
         caption=(
-            f"Answer quality on {_tt(dataset)}. Exact match and token-level F1 follow the "
-            "official HotpotQA evaluation script, including its yes/no short circuit; "
-            r"SP-EM, SP-P, SP-R and SP-F1 are set metrics over "
-            r"$(\textit{title}, \textit{sent\_id})$ supporting-fact pairs. "
-            f"$n$ is the number of questions scored. "
-            f"{answer_note} {support_note} {protocol_note} {_unrun_note()}"
+            f"Answer quality on {_tt(dataset)}, $n$ questions each. EM and F1 follow the "
+            "official HotpotQA script; SP columns are set metrics over supporting-fact "
+            f"sentences. {answer_note} {protocol_note} {_unrun_note()}"
             + _no_answer_note(runs, config_names=config_names, columns="EM, F1 and $\\Delta$F1")
             + partial_note
             + artefact_note
@@ -1343,12 +1327,9 @@ def main_results_tables(
         ),
         groups=retrieval_groups,
         caption=(
-            f"Retrieval quality on {_tt(dataset)}, computed with "
-            r"\texttt{pytrec\_eval} over the reciprocal-rank fusion of every sub-query's "
-            "ranking and judged against the gold supporting-fact documents. A multi-hop "
-            "system issues several queries, so ``the ranking'' is not directly observed; "
-            "fusing them is how the orchestrator itself pools evidence, and it needs no "
-            f"score calibration between BM25 and cosine. {retrieval_note} {_unrun_note()}"
+            f"Retrieval quality on {_tt(dataset)}, computed over the reciprocal-rank "
+            "fusion of every sub-query's ranking against the gold supporting-fact "
+            f"documents. {retrieval_note} {_unrun_note()}"
             + partial_note
         ),
         label=f"tab:main-retrieval-{dataset}",
@@ -1454,46 +1435,26 @@ def agent_metrics_table(
         hang_note = (
             f" \\textbf{{One or more questions overran the "
             f"{fmt_int(budget)}\\,s \\texttt{{orchestrator.max\\_wall\\_clock\\_s}} "
-            f"budget}}: {', '.join(hangs)}. The budget is evidently only tested between "
-            "state transitions, so it cannot pre-empt a call that blocks inside one; "
-            "this is a system defect and not only a reporting one, and it is why the "
-            r"central column is a median. The arithmetic mean of \texttt{latency\_s} on "
-            "such a run is that single question divided by $n$ and describes nothing "
-            r"that happens per question. See \texttt{docs/report-audit.md}."
+            f"budget}}: {', '.join(hangs)}; the budget is tested between calls and "
+            "cannot pre-empt one that blocks."
         )
     saved_note = ""
     if saved_breakdown:
         saved_note = (
-            r" \textbf{\textit{Saved} is recomputed from the step trace under one "
-            r"definition}: a call is saved only when a deterministic rule produced an "
-            "output that, absent the rule, this configuration would have obtained by an "
-            "LLM call. The agents' own counter credits every rule that fired; two of "
-            r"those rules stand in for calls this configuration cannot make -- with "
-            r"\texttt{heuristic\_shortcut: true} the LLM router is unreachable for every "
-            r"sub-query, and with \texttt{entity\_linker: alias\_match} there is no LLM "
-            "entity linker to skip -- and the identity plan of the no-planner ablation is "
-            "the ablation itself, not a rule gating a planner call. A verifier skip for "
-            "an empty or already-insufficient answer is a call nobody would make, not one "
-            "replaced. The extraction ladder, which replaces a real rung-4 LLM call on "
-            "every rung-1 to rung-3 success, never incremented the counter at all. "
-            "Per-question decomposition, counted terms in bold, so any other definition "
-            "can be applied from the same numbers: " + "; ".join(saved_breakdown) + "."
+            r" \textit{Saved} is recomputed from the step trace: a call counts only where "
+            "a configured model path would have issued it and a rule pre-empted it. "
+            "Per-question terms, counted ones in bold: " + "; ".join(saved_breakdown) + "."
         )
     depth_note = (
-        r" \textit{Plan depth} is the depth of the \textit{selected} plan (the cycle "
-        r"FINALIZE chose, \texttt{best\_cycle}), as \texttt{docs/architecture.md} "
-        r"\S6 defines it; the orchestrator's own metrics block records the "
-        r"\textit{latest} plan's depth and the two differ wherever a re-plan executed "
-        "and the first cycle's answer was kept"
+        r" \textit{Plan depth} is that of the selected cycle, which differs from the "
+        "latest plan's wherever a re-plan executed and the first answer was kept"
         + (f" ({', '.join(depth_notes)})" if depth_notes else "")
         + "."
     )
     replan_note = (
-        r" \textit{Re-plan rate} is the fraction of questions on which the verifier "
-        r"triggered at least one re-plan (\textit{trig.}) and the fraction on which a "
-        r"re-planned cycle actually executed (\textit{exec.}); the two differ when the "
-        "planner's re-plan was a near-duplicate of a plan already run and transition T2b "
-        "discarded it, which the trace counts as a re-plan but not as a cycle"
+        r" \textit{Re-plan rate} is the fraction of questions on which a re-plan was "
+        r"triggered (\textit{trig.}) and on which one executed (\textit{exec.}); a "
+        "near-duplicate re-plan is discarded before it runs"
         + (
             ". Questions with a discarded re-plan: " + ", ".join(discard_notes)
             if discard_notes
@@ -1511,18 +1472,11 @@ def agent_metrics_table(
         groups=groups,
         caption=(
             f"Agent-specific cost on {_tt(dataset)}, per question. "
-            r"\textit{LLM calls} counts logical calls, cache hits included; "
-            r"\textit{Saved} counts calls a deterministic rule replaced, under the "
-            "definition stated below; "
-            r"\textit{Re-plan rate} is a fraction of questions, not a mean count; "
-            r"\textit{Cite grounding} is averaged only "
-            "over questions that produced a non-empty answer, so it cannot be inflated by "
-            r"abstentions. \textbf{Latency is the median per question, with the maximum "
-            r"beside it}, and every other column is a mean: latency is the one unbounded "
-            "quantity here, so it is the one a single hung question can dominate, and a "
-            "mean of it would report that question rather than the system. The maximum is "
-            "printed rather than trimmed so the outlier stays in view. Latency is only "
-            "comparable between cold-cache runs."
+            r"\textit{Saved} counts calls a deterministic rule replaced where a model "
+            r"path was configured. \textit{Cite grounding} is averaged over answered "
+            "questions. Latency is "
+            "the median per question with the maximum beside it, because one blocked "
+            "call can dominate a mean."
             + caveat
             + hang_note
             + saved_note
@@ -1653,8 +1607,7 @@ def ablations_table(
         if expected is not None and sizes == {expected}:
             sample_note = (
                 f" Every row covers the same frozen {expected}-question evaluation slice "
-                f"as the main results -- no ablation was run on a reduced subsample "
-                f"({stated})."
+                f"as the main results ({stated})."
             )
         else:
             sample_note = (
@@ -1674,11 +1627,8 @@ def ablations_table(
         caption=(
             f"Ablation study on {_tt(dataset)}. {note}"
             + sample_note
-            + f" {_tt(REFERENCE_CONFIG)} is repeated from the main results as the "
-            "non-agentic floor, since removing planning, synthesis and verification "
-            "reduces the pipeline to it. Latency is the median per question, matching "
-            r"Table~\ref{tab:agent-metrics-" + dataset + "}; the maximum and the "
-            "wall-clock overruns are reported there. "
+            + f" {_tt(REFERENCE_CONFIG)} is repeated as the non-agentic floor. "
+            "Latency is the median per question. "
             + _unrun_note()
             + _no_answer_note(
                 runs, config_names=ordered, columns="EM, F1, $\\Delta$F1 and $p$"
@@ -1881,7 +1831,7 @@ def error_analysis_table(
         "is checked rather than assumed."
         if corpus_titles is not None
         else "Corpus titles were not loaded, so the "
-        r"\texttt{decomposition\_error} rule assumes gold facts exist in the corpus -- "
+        r"\texttt{decomposition\_error} rule assumes gold facts exist in the corpus, "
         "the permissive direction, which can blame the decomposition for a genuine "
         "corpus gap."
     )
@@ -1913,16 +1863,13 @@ def error_analysis_table(
             ("Totals", total_rows),
         ],
         caption=(
-            f"Failure profile on {_tt(dataset)}. Labels are assigned post hoc by "
-            r"\texttt{eval/error\_analysis.py} from the trace and the gold supporting "
-            "facts -- deterministically, first match wins -- in a cascade from ``the "
-            "system never had a chance'' to ``it had everything it needed and still got "
-            r"it wrong''. \texttt{verifier\_false\_accept} and "
+            f"Failure profile on {_tt(dataset)}. Labels are assigned post hoc from "
+            "the trace and the gold supporting facts, first match winning, from the "
+            "system never having a chance to having everything and still getting it "
+            r"wrong. \texttt{verifier\_false\_accept} and "
             r"\texttt{verifier\_false\_reject} are counted again in the totals, "
-            "independently of the cascade: the ordered label makes a false reject nearly "
-            "unreachable, and it is the count that makes the "
-            r"Verifier$\rightarrow$Planner loop falsifiable. "
-            f"{corpus_note} A configuration with no run has no column."
+            "independently of the cascade, since they are what make the feedback loop "
+            "falsifiable. A configuration with no run has no column."
             + no_answer_note
             + _partial_note(runs, config_names=present, expected=expected)
         ),

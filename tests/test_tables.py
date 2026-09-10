@@ -464,7 +464,11 @@ def test_the_chapters_input_exactly_the_files_this_module_writes():
         "confidence_diagnostic.tex": "eval/confidence.py",
         "replication.tex": "eval/replication.py",
     }
-    written = set(tables.TABLE_FILES) | set(other_generators)
+    # The improvement loop's three fragments are written by this module too,
+    # through write_v2_tables rather than the TABLE_FILES entry point, so that
+    # `cli tables` can never regenerate them: they read results/runs_v2, which
+    # discover_runs must not see. Named here for the same reason the others are.
+    written = set(tables.TABLE_FILES) | set(tables.V2_TABLE_FILES) | set(other_generators)
     assert referenced <= written, (
         f"report/ inputs fragments no generator writes: "
         f"{sorted(referenced - written)}. Fragments are produced by tables.py "
