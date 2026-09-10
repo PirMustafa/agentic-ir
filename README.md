@@ -356,12 +356,14 @@ the report says so.
 
 ```
 config/config.yaml         Every tunable knob; values referenced in the report
+config/config.v2.yaml      The improvement loop's variant: config.yaml plus two lines
 scripts/                   The five pipeline stages, in order:
                              download_data · build_corpus · build_indexes
                              build_kg · sample_eval_set
 scripts/demo.py            Guided walkthrough; replays real runs, needs no GPU
 scripts/dashboard.py       Local web dashboard: sweep progress, trace browser, live ask
 scripts/dashboard.html     Its single-page front end; standard library only
+scripts/gpu-lock.sh        Mutual exclusion for GPU runs; the loop ran under it
 src/agentic_ir/
   ├── agents/              Planner · Retriever · KG Navigator · Verifier · Synthesizer
   ├── tools/               Tool registry exposed to the Retrieval agent
@@ -374,8 +376,15 @@ report/                    LaTeX source, Chapters 1–5
 results/tables/            Generated .tex fragments the chapters \input{}
 results/calibration/       Verifier threshold sweep, per dataset
 results/runs/              Per-question traces — gitignored, see "Reproducing"
+results/runs_v2/           The improvement loop's runs and probes; invisible to
+                             the table generator by design, gitignored likewise
 docs/architecture.md       What the code actually does, checked against the code
 docs/report-audit.md       Integrity audit: every number traced to the run that made it
+docs/improvement-loop.md   The loop's protocol: targets, budgets, backlog, stop rules
+docs/improvement-loop.log.md
+                           Its full record, one block per iteration, drops included
+docs/rectification-plan.md The audit of the loop and the fixes it required
+docs/accuracy-plan.md      The diagnosis the loop started from
 docs/assignment-brief.md   The original assignment specification
 ```
 
@@ -398,13 +407,12 @@ report used rather than assumed identical.
 - [x] **M2** — Planner and Retrieval agents
 - [x] **M3** — KG Navigator
 - [x] **M4** — Verifier and the re-plan feedback loop
-- [x] **M5** — Full evaluation, ablations, result tables *(16 of the 18 grid cells —
-      9 configurations × 2 datasets — are scored on all 250 questions. Complete on
-      HotpotQA. On 2WikiMultihopQA the five baselines, `agentic_full` and
-      `agentic_no_verifier` are done; `agentic_no_planner` is mid-run and
-      `agentic_no_kg` has not started. Both render as `--` rows and nothing is
-      concluded from them.)*
-- [x] **M6** — Report Chapters 1–5, final PDF
+- [x] **M5** — Full evaluation, ablations, result tables. All 18 grid cells
+      (9 configurations × 2 datasets) are scored on the same frozen 250 questions.
+- [x] **M6** — Report, Chapters 1 to 5, 28 pages including the bibliography.
+- [x] **M7** — Improvement loop: five hypotheses tested against the one-node
+      configuration, one kept, all decided; plus an independent audit of the loop
+      and the fixes it required. See [Improvement loop](#improvement-loop).
 
 ### Headline results
 
@@ -419,15 +427,63 @@ The system **loses** on answer accuracy — ΔF1 −0.093 [−0.145, −0.039], 
 and wins on attribution and evidence recall: citation grounding 0.960 against 0.000,
 and pooled supporting-fact recall 0.793 against 0.696.
 
-**The re-plan loop does not replicate across datasets, and that is the headline
-finding.** Removing the verifier costs 3.7 F1 points on HotpotQA
-(ΔF1 −0.037 [−0.065, −0.011], *p* = 0.008) and nothing at all on 2WikiMultihopQA
-(ΔF1 −0.001 [−0.025, +0.025], *p* = 1.000) — as null as a result can be, and not for
-want of firing: the loop ran on 98 of 250 questions there. The defensible claim is the
-conditional one, *the backward edge helps on HotpotQA and not on 2WikiMultihopQA*, and
-that is what Chapter 4 says. Removing the planner or the knowledge graph costs nothing
-measurable on either. All of this is reported as found rather than smoothed; see
-`docs/report-audit.md` for the integrity audit that produced these corrections.
+**The re-plan loop does not replicate across datasets.** Removing the verifier
+costs 3.7 F1 points on HotpotQA (ΔF1 −0.037 [−0.065, −0.011], *p* = 0.008) and
+nothing at all on 2WikiMultihopQA (ΔF1 −0.001 [−0.025, +0.025], *p* = 1.000), and
+not for want of firing: the loop ran on 98 of 250 questions there. The defensible
+claim is the conditional one, *the backward edge helps on HotpotQA and not on
+2WikiMultihopQA*, and that is what Chapter 4 says.
+
+**Removing the planner makes the system better.** This is the most consequential
+result in the study. `agentic_no_planner` scores above the full system on HotpotQA
+(ΔF1 +0.033, not significant) and decisively on 2WikiMultihopQA (ΔF1 +0.121
+[+0.067, +0.173], *p* < 0.001) at a third of the model calls and an eighth of the
+wall clock, and it is the only configuration in the grid to beat `self_ask`
+significantly. With the planner gone it issues one query, exactly like `naive_rag`,
+which scores 0.152 on the same questions; the gap is the rest of the agentic stack.
+The knowledge graph is a null on both datasets: about half the tool calls, more than
+half the latency, nothing either evaluation can detect. All of this is reported as
+found rather than smoothed; see `docs/report-audit.md` for the integrity audit that
+produced these corrections.
+
+## Improvement loop
+
+After the grid, a bounded loop tested five hypotheses against the one-node
+configuration, each measured on the same 250 questions and kept or dropped on a
+paired interval. Its protocol is `docs/improvement-loop.md`, its full per-iteration
+record (every drop, every coordinator error) is `docs/improvement-loop.log.md`, and
+the independent audit that followed is `docs/rectification-plan.md`.
+
+One hypothesis survived. `agentic_v2` is the one-node plan with the model's
+reasoning mode enabled for the synthesiser only, at a completion budget large
+enough to hold it:
+
+| | HotpotQA EM | 2WikiMultihopQA EM |
+|---|---|---|
+| `agentic_full` (the report's system) | 0.432 | 0.224 |
+| `agentic_v2` (kept) | **0.524** | **0.456** |
+| paired ΔEM vs `agentic_full` | +0.092 [+0.036, +0.144] | +0.232 [+0.168, +0.296] |
+| paired ΔEM vs `self_ask` | +0.020 [−0.032, +0.072], a tie | +0.192 [+0.128, +0.256] |
+
+Dropped, with the reason on record: a larger local model (`qwen3:14b` runs at 11.1
+tok/s against the 24.5 the budget needs), a wider evidence budget (its premise
+described a different system; on the one-node plan the change moves complete gold
+pools from 142 to 143), a graph quota (the ranking is the defect, not the budget),
+and self-consistency voting (of 19 candidate errors, 15 are formatting artefacts
+with no variance to vote away). Two of the four were closed offline, at no GPU cost.
+
+Two findings from the loop outlive it. Reasoning on the synthesiser introduces a
+failure mode suppression does not have: in 10 of 500 questions the model spends its
+whole budget in the thinking channel and never answers, and the obvious repair
+recovers the content channel 10 times out of 10 with 0 correct answers. And **seed
+pinning does not make this system reproducible**: identical prompts at temperature 0
+produce different completions, because Ollama's KV prefix cache changes the batch
+shape between requests. That bounds every comparison in the report at roughly a point
+or two of exact match.
+
+`agentic_full` is unchanged by all of it. Every fix ships behind a flag defaulting
+to the evaluated behaviour, and a test checks that the four evaluated agentic
+configurations resolve to identical settings before and after.
 
 ## License
 

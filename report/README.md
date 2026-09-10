@@ -1,28 +1,31 @@
 # Project Report
 
-Chapter structure follows Section 4 of the assignment brief exactly.
+Chapter structure follows Section 4 of the assignment brief exactly. The
+compiled report is 28 pages including the bibliography, at 11pt on A4.
 
-| File | Chapter | Status |
+| File | Chapter | Inputs |
 |---|---|---|
-| `chapters/ch1_introduction.tex` | 1 — Introduction to Agentic AI in IR | written; includes the Table 1 task-mapping table |
-| `chapters/ch2_data.tex` | 2 — Data and Preprocessing | written; inputs `dataset_stats.tex` |
-| `chapters/ch3_methodology.tex` | 3 — Retrieval Methodologies | written |
-| `chapters/ch4_implementation.tex` | 4 — System Implementation and Evaluation | written; inputs `main_results`, `agent_metrics`, `ablations`, `error_analysis`, `calibration`. No `% PLACEHOLDER` remains: the two unfinished grid cells render as `--` rows from the generated tables, and the prose says so and concludes nothing from them |
-| `chapters/ch5_conclusions.tex` | 5 — Conclusions and Future Work | written; findings and limitations track the current generated tables |
+| `chapters/ch1_introduction.tex` | 1, Introduction to Agentic AI in IR | the Table 1 task-mapping table |
+| `chapters/ch2_data.tex` | 2, Data and Preprocessing | `dataset_stats.tex` |
+| `chapters/ch3_methodology.tex` | 3, Retrieval Methodologies | the architecture figure |
+| `chapters/ch4_implementation.tex` | 4, System Implementation and Evaluation | `main_results`, `agent_metrics`, `ablations`, `error_analysis`, and the improvement loop's `v2_results`, `v2_cost`, `v2_failures` (Section 4.8) |
+| `chapters/ch5_conclusions.tex` | 5, Conclusions and Future Work | `replication.tex` |
 
-The prose is complete. What is still open is the evaluation grid, not the
-writing. Sixteen of the eighteen cells (9 configurations × 2 datasets) are
-scored on all 250 questions. The two that are not are `agentic_no_planner` on
-2WikiMultihopQA, which is mid-run, and `agentic_no_kg` on 2WikiMultihopQA,
-which has not started; both render as `--` rows and Chapter 4 draws no
-conclusion from them. `docs/report-audit.md` records which runs are finished
-and which sentences depend on the ones that are not.
+The evaluation grid is complete: nine configurations on two datasets, all
+eighteen cells over the same frozen 250 questions. Every table is generated
+from the run artefacts by `src/agentic_ir/eval/tables.py` and inserted
+verbatim; no number in the report is typed by hand, and
+`tests/test_report_integrity.py` checks that prose numbers trace to artefacts
+on disk. `docs/report-audit.md` records which corrections that audit produced.
 
-Chapter 4's central ablation result is deliberately conditional. Removing the
-verifier costs 0.037 F1 on HotpotQA (*p* = 0.008) and 0.001 F1 on
-2WikiMultihopQA (*p* = 1.000), so the chapter claims the backward edge helps
-on HotpotQA and not on 2WikiMultihopQA, and nothing more general. Any edit
-that restates that finding as a property of the system is wrong.
+Two of the report's findings are deliberately conditional and any edit that
+restates them as general is wrong. Removing the verifier costs 0.037 F1 on
+HotpotQA (*p* = 0.008) and 0.001 on 2WikiMultihopQA (*p* = 1.000), so the
+chapter claims the backward edge helps on one dataset and not the other. And
+the improvement loop's kept configuration ties `self_ask` on HotpotQA
+(+0.020, interval spanning zero) while beating it by 0.192 on 2WikiMultihopQA,
+so the architecture is said to earn its place on the dataset built to need
+multiple hops and not on the one that does not.
 
 ## Building
 
@@ -31,21 +34,20 @@ Locally with `latexmk`:
 cd report && latexmk -pdf main.tex
 ```
 
-Or upload the `report/` folder to [Overleaf](https://overleaf.com) — no local
-TeX installation needed.
+Or upload the `report/` folder to [Overleaf](https://overleaf.com); no local
+TeX installation is needed. The chapters `\input` the generated tables by
+relative path (`../results/tables/`), so regenerate those first if any run has
+changed:
 
-## Writing order
+```bash
+python -m agentic_ir.cli tables                 # the nine-system grid
+python -c "from agentic_ir.eval.tables import write_v2_tables as w; w()"   # the loop's three
+```
 
-Chapters are **not** written front to back. Chapter 4 depends on results, so
-the order that avoids rewriting is: 2 → 3 → 4 → 1 → 5. The introduction is
-written last because it should promise exactly what the results delivered.
+## Style
 
-Numbers must never be typed by hand into the report. `results/tables/` holds
-generated `.tex` fragments that the chapters `\input{}`, so a re-run of the
-evaluation updates the report automatically and the two can never disagree.
-Prose that quotes a table cell has to be re-read whenever the tables are
-regenerated (`python -m agentic_ir.cli tables`); `tests/test_report_integrity.py`
-mechanises part of that check and `docs/report-audit.md` records the rest.
-The few figures that come from a trace rather than a table (a qid, a count of
-re-planned questions, the verifier's component scores on one record) are
-attributed to their run in the text.
+Chapter headings are centred (`titlesec`). The contents lists chapters and
+sections only. The prose uses no dashes as punctuation; ranges are written
+out ("22 to 25 seconds") and asides are sentences. Generated table captions
+are kept short; the caveats they once restated live once, in the chapter that
+owns the table.
