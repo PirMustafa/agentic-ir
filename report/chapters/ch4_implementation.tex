@@ -54,7 +54,7 @@ file capturing the full configuration, library versions, model digest and
 seed, and a flat metrics file. The harness checkpoints by appending, so a run
 interrupted at question 194 resumes at 194. Sorting is deterministic with an
 explicit tiebreaker on document identifier. The implementation is covered by
-444 automated tests, three of which enforce properties that would otherwise
+461 automated tests, three of which enforce properties that would otherwise
 fail silently: no module outside the model client can reach the network, no
 agent reads the gold answer, and the graph builder never opens a gold evidence
 file.

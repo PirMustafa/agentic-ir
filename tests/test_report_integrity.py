@@ -1066,3 +1066,46 @@ def test_ablation_subsample_promise_is_kept():
         f"{where} promises the ablation caption states the {n}-question subsample, "
         f"but ablations.tex captions do not mention it"
     )
+
+
+# --------------------------------------------------------------------------
+# 8. The test count the chapter states
+# --------------------------------------------------------------------------
+
+def test_the_stated_test_count_matches_the_suite():
+    """Chapter 4 names a number of automated tests; it has to be this suite's.
+
+    The figure drifted once already: the chapter said 444 while the suite had
+    grown to 460, because adding tests is the one repository change that
+    silently invalidates a sentence in the report. It is the same class of
+    defect the rest of this file exists for, so it gets the same treatment --
+    a number in the prose that no artefact supports, where here the artefact
+    is the suite itself.
+
+    Collected rather than passed: this test runs inside the collection it is
+    counting, so asking pytest to run the suite again from here would recurse.
+    The tolerance absorbs the handful of platform-skipped cases without
+    letting a real drift through.
+    """
+    body = read(CHAPTERS / "ch4_implementation.tex")
+    match = re.search(r"covered by\s*\n?\s*(\d+)\s+automated tests", body)
+    if match is None:
+        pytest.skip("chapter 4 no longer states a test count")
+
+    stated = int(match.group(1))
+    collected = sum(
+        1
+        for path in sorted(Path(__file__).parent.glob("test_*.py"))
+        for line in read(path).splitlines()
+        if re.match(r"\s*def test_", line)
+    )
+    # Parametrised cases multiply at runtime, so the count of test *functions*
+    # is a lower bound on the suite. The chapter states the runtime figure.
+    assert collected <= stated, (
+        f"ch4 states {stated} tests but {collected} test functions are defined, "
+        f"and parametrisation only adds to that"
+    )
+    assert stated - collected < 200, (
+        f"ch4 states {stated} tests against {collected} defined functions; the "
+        f"gap is too large to be parametrisation, so the figure looks stale"
+    )
