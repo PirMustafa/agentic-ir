@@ -68,7 +68,15 @@ llm:
   # Per-agent models. Planner and Verifier get the reasoning model;
   # the high-volume Retrieval agent gets the cheaper/faster path.
   default_model: qwen3:8b
-  fallback_model: qwen2.5:7b-instruct
+  # No fallback model, and that is deliberate rather than an omission.
+  # It fires only when the primary tag is not pulled, and it would then load a
+  # second model beside a qwen3:8b still inside its keep-alive window: 5.23 +
+  # 4.68 GB on an 8 GB card, which thrashes rather than degrades
+  # (docs/environment-validation.md). qwen2.5:7b-instruct was never installed
+  # here, so the setting has never fired and no reported number depends on it.
+  # Null makes the config say what is true: a missing primary is a loud
+  # failure, which is the behaviour this project wants anyway.
+  fallback_model: null
   models:
     planner:   qwen3:8b
     retriever: qwen3:8b

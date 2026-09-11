@@ -423,10 +423,14 @@ plus instructions, is ~1.5k tokens — well inside 4096. The 8192 setting is onl
 later feed all `top_n: 50` reranked passages to the LLM.
 
 **Two more sequencing notes:**
-- `llm.fallback_model: qwen2.5:7b-instruct` is **[VERIFIED]** a real tag (4.68 GB). But if the
-  fallback fires while `qwen3:8b` is still within its keep-alive window, Ollama will hold **both**
-  (5.23 + 4.68 = 9.9 GB) and thrash. Whoever writes `llm.py` should explicitly unload the primary
-  before falling back.
+- `llm.fallback_model` was `qwen2.5:7b-instruct`, **[VERIFIED]** a real tag (4.68 GB). The concern
+  recorded here was that if it fired while `qwen3:8b` was still inside its keep-alive window, Ollama
+  would hold **both** (5.23 + 4.68 = 9.9 GB) on an 8 GB card and thrash. **Resolved on 2026-09-11 by
+  retiring the setting** rather than by unloading the primary first: the tag was never installed on
+  this machine, so the fallback never fired and no reported number depends on it, and a second model
+  beside the primary is not something this card can afford in any case. `fallback_model: null` now,
+  which makes a missing primary a loud failure. `OllamaClient.ping()` consequently reports no
+  missing models instead of listing one that was never wanted.
 - Good design already present: all five agents in `llm.models` use the *same* `qwen3:8b`, so there
   is no per-agent model swapping. Keep it that way.
 - **[VERIFIED]** System RAM available at check time was only 5.5 GiB of 31.6 GiB. If Ollama does
